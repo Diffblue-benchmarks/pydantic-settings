@@ -425,6 +425,54 @@ class TestEnvSettingsSourceExplodeEnvVars:
         result = source.explode_env_vars('data', field, env_vars)
         assert 'nested' in result
 
+    def test_explode_env_vars_with_enum_parsing(self):
+        """Test explode_env_vars with enum field and env_parse_enums enabled"""
+        from enum import Enum
+
+        class Status(str, Enum):
+            ACTIVE = 'active'
+            INACTIVE = 'inactive'
+
+        class NestedModel(BaseModel):
+            status: Status = Status.ACTIVE
+            value: str = 'default'
+
+        class NestedSettings(BaseSettings):
+            config: NestedModel = NestedModel()
+
+        env_vars = {
+            'config__status': 'ACTIVE',
+            'config__value': 'test',
+        }
+
+        source = EnvSettingsSource(
+            NestedSettings,
+            env_nested_delimiter='__',
+            env_parse_enums=True
+        )
+        field = NestedSettings.model_fields['config']
+        result = source.explode_env_vars('config', field, env_vars)
+        assert 'status' in result
+        assert 'value' in result
+
+    def test_explode_env_vars_complex_field_invalid_json(self):
+        """Test explode_env_vars with complex field and invalid JSON raises ValueError"""
+        class NestedModel(BaseModel):
+            items: List[str] = []
+
+        class ComplexSettings(BaseSettings):
+            data: NestedModel = NestedModel()
+
+        env_vars = {
+            'data__items': 'invalid json [',
+        }
+
+        source = EnvSettingsSource(ComplexSettings, env_nested_delimiter='__')
+        field = ComplexSettings.model_fields['data']
+
+        with pytest.raises(ValueError):
+            source.explode_env_vars('data', field, env_vars)
+
 
 class TestEnvSettingsSourceCoerceEnvValStrict:
     """Test _coerce_env_val_strict method"""
