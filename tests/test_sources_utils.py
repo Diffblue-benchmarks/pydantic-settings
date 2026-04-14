@@ -163,10 +163,63 @@ def test_resolve_type_alias_non_alias():
     assert result == str
 
 
-@pytest.mark.skip(reason="TypeAliasType requires Python 3.12+")
-def test_resolve_type_alias_type_alias():
-    # This test would require Python 3.12+ TypeAliasType
-    pass
+def test_resolve_type_alias_simple_type_alias():
+    """Test resolving a simple non-parameterized TypeAliasType."""
+    import sys
+    if sys.version_info < (3, 12):
+        pytest.skip("TypeAliasType requires Python 3.12+")
+
+    from typing import TypeAliasType
+    # Create a simple type alias
+    SimpleAlias = TypeAliasType("SimpleAlias", int)
+    result = _resolve_type_alias(SimpleAlias)
+    assert result == int
+
+
+def test_resolve_type_alias_parameterized_type_alias():
+    """Test resolving a parameterized TypeAliasType with type arguments."""
+    import sys
+    if sys.version_info < (3, 12):
+        pytest.skip("TypeAliasType requires Python 3.12+")
+
+    from typing import TypeAliasType, TypeVar
+    # Create a parameterized type alias
+    T = TypeVar('T')
+    GenericAlias = TypeAliasType("GenericAlias", List[T], type_params=(T,))
+
+    # Use the alias with a concrete type argument
+    ConcreteAlias = GenericAlias[str]
+    result = _resolve_type_alias(ConcreteAlias)
+
+    # Should resolve to List[str]
+    from typing import get_origin, get_args
+    assert get_origin(result) in (list, List)
+    assert get_args(result) == (str,)
+
+
+def test_resolve_type_alias_parameterized_no_args():
+    """Test resolving a parameterized TypeAliasType without type arguments."""
+    import sys
+    if sys.version_info < (3, 12):
+        pytest.skip("TypeAliasType requires Python 3.12+")
+
+    from typing import TypeAliasType, TypeVar
+    # Create a parameterized type alias
+    T = TypeVar('T')
+    GenericAlias = TypeAliasType("GenericAlias", List[T], type_params=(T,))
+
+    # Resolve without providing type arguments - should return the raw value
+    result = _resolve_type_alias(GenericAlias)
+
+    # Should resolve to List[T] (the underlying value)
+    from typing import get_origin, get_args
+    assert get_origin(result) in (list, List)
+    # The args will contain the TypeVar T
+    args = get_args(result)
+    assert len(args) == 1
+    assert isinstance(args[0], TypeVar)
+
+
 
 
 # Tests for _annotation_is_complex
