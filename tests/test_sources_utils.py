@@ -157,6 +157,39 @@ def test_substitute_typevars_union():
     assert result == Union[int, str] or result == int | str
 
 
+def test_substitute_typevars_no_args_change():
+    """Test when args exist but no substitution occurs (returns original type)."""
+    T = TypeVar('T')
+    param_map = {T: int}
+    # List[str] has args, but none of them need substitution
+    result = _substitute_typevars(List[str], param_map)
+    # Should return the original type since new_args == args
+    from typing import get_origin, get_args
+    assert get_origin(result) in (list, List)
+    assert get_args(result) == (str,)
+
+
+def test_substitute_typevars_uniontype_subscript_error():
+    """Test handling of TypeError when origin is not subscriptable (e.g., types.UnionType).
+
+    This covers the exception handler that uses functools.reduce and operator.or_.
+    """
+    import sys
+    if sys.version_info < (3, 10):
+        pytest.skip("types.UnionType (|) requires Python 3.10+")
+
+    T = TypeVar('T')
+    param_map = {T: str}
+    # Create a union using | operator, which creates types.UnionType
+    union_type = int | T
+    result = _substitute_typevars(union_type, param_map)
+    # Should handle the TypeError and use reduce + operator.or_
+    # The result should be equivalent to int | str
+    from typing import get_args
+    result_args = set(get_args(result))
+    assert result_args == {int, str}
+
+
 # Tests for _resolve_type_alias
 def test_resolve_type_alias_non_alias():
     result = _resolve_type_alias(str)
