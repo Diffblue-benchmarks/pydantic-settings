@@ -314,6 +314,44 @@ def test_annotation_contains_types_is_instance():
     assert _annotation_contains_types(List[int], (list,), is_instance=True)
 
 
+def test_annotation_contains_types_is_instance_origin_with_collect():
+    """Test is_instance with collect when origin is instance of types.
+
+    This covers the branch where isinstance(origin, type_) is True and collect is used.
+    list is a class, which is an instance of type metaclass.
+    """
+    collect = set()
+    # List[int] has origin=list, and list is an instance of type
+    _annotation_contains_types(List[int], (type,), is_instance=True, collect=collect)
+    # Check that something was added to collect (covers line 185)
+    assert len(collect) > 0
+    assert List[int] in collect
+
+
+def test_annotation_contains_types_is_instance_annotation_with_collect():
+    """Test is_instance with collect when annotation is instance of types.
+
+    This covers the branch where isinstance(annotation, type_) is True and collect is used.
+    """
+    collect = set()
+    # list itself is an instance of type
+    _annotation_contains_types(list, (type,), is_instance=True, collect=collect)
+    # Check that something was added to collect (covers line 202)
+    assert len(collect) > 0
+    assert list in collect
+
+
+def test_annotation_contains_types_direct_match_with_collect():
+    """Test direct match with collect parameter.
+
+    This covers the branch where annotation in types and collect is not None.
+    """
+    collect = set()
+    result = _annotation_contains_types(int, (int, str), collect=collect)
+    assert result is True
+    assert int in collect
+
+
 # Tests for _strip_annotated
 def test_strip_annotated_basic():
     result = _strip_annotated(Annotated[str, 'meta'])
