@@ -183,3 +183,45 @@ def test_toml_config_settings_source_repr(temp_toml_file):
 
     assert 'TomlConfigSettingsSource' in repr_str
     assert str(temp_toml_file) in repr_str
+
+
+def test_import_toml_early_return_when_already_loaded():
+    """Test that import_toml returns early when tomli is already set (Python < 3.11 path)"""
+    import pydantic_settings.sources.providers.toml as toml_module
+
+    # Create a mock tomli module
+    mock_tomli = MagicMock()
+    mock_tomli.load = MagicMock()
+
+    # Mock sys.version_info to simulate Python 3.10
+    with patch.object(sys, 'version_info', (3, 10, 0)):
+        # Set tomli as already loaded
+        toml_module.tomli = mock_tomli
+
+        # Call import_toml - should return early without changing tomli
+        import_toml()
+
+        # Verify tomli reference is unchanged (early return happened)
+        assert toml_module.tomli is mock_tomli
+
+
+def test_import_toml_successful_import_when_not_loaded():
+    """Test successful import of tomli when not already imported (Python < 3.11 path)"""
+    import pydantic_settings.sources.providers.toml as toml_module
+
+    # Create a mock tomli module
+    mock_tomli = MagicMock()
+    mock_tomli.load = MagicMock()
+
+    # Mock sys.version_info to simulate Python 3.10
+    with patch.object(sys, 'version_info', (3, 10, 0)):
+        with patch.dict('sys.modules', {'tomli': mock_tomli}):
+            # Set tomli to None to force import
+            toml_module.tomli = None
+
+            # Call import_toml - should successfully import tomli
+            import_toml()
+
+            # Verify tomli was imported
+            assert toml_module.tomli is not None
+            assert toml_module.tomli is mock_tomli
