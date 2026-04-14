@@ -233,6 +233,46 @@ class TestEnvSettingsSourcePrepareFieldValue:
         # The result might be 'RED' or Color.RED depending on implementation
         assert result is not None
 
+    def test_prepare_field_value_complex_none_with_explode_env_vars(self, settings_with_complex_fields, monkeypatch):
+        """Test preparing complex field value when None with explode_env_vars returning data"""
+        # Set up environment variables with nested delimiter
+        monkeypatch.setenv('DICT_FIELD__KEY1', 'value1')
+        monkeypatch.setenv('DICT_FIELD__KEY2', 'value2')
+
+        source = EnvSettingsSource(
+            settings_with_complex_fields,
+            env_nested_delimiter='__'
+        )
+        field = settings_with_complex_fields.model_fields['dict_field']
+        result = source.prepare_field_value('dict_field', field, None, True)
+
+        # Should return the exploded env vars
+        assert result is not None
+        assert isinstance(result, dict)
+
+    def test_prepare_field_value_complex_invalid_json_raises_error(self, settings_with_complex_fields):
+        """Test preparing complex field value with invalid JSON raises ValueError"""
+        source = EnvSettingsSource(settings_with_complex_fields)
+        field = settings_with_complex_fields.model_fields['dict_field']
+        invalid_json = '{invalid json}'
+
+        # Should raise ValueError since allow_parse_failure is False for dict fields
+        with pytest.raises(ValueError):
+            source.prepare_field_value('dict_field', field, invalid_json, True)
+
+    def test_prepare_field_value_complex_list_returns_value(self, settings_with_complex_fields):
+        """Test preparing complex field value with list returns the list value"""
+        source = EnvSettingsSource(settings_with_complex_fields)
+        field = settings_with_complex_fields.model_fields['list_field']
+        json_value = '["item1", "item2", "item3"]'
+
+        result = source.prepare_field_value('list_field', field, json_value, True)
+
+        # Should return the decoded list
+        assert isinstance(result, list)
+        assert len(result) == 3
+        assert result == ["item1", "item2", "item3"]
+
 
 class TestEnvSettingsSourceFieldIsComplex:
     """Test _field_is_complex method"""
