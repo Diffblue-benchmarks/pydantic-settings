@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from typing import Any, List, Optional, Union
 
 import pytest
-from pydantic import AliasPath, BaseModel, Field
+from pydantic import AliasChoices, AliasPath, BaseModel, Field
 from pydantic.fields import FieldInfo
 
 from pydantic_settings import BaseSettings, CliSettingsSource
@@ -768,3 +768,73 @@ def test_metavar_format_recurse_typing_any_fallback():
     source = CliSettingsSource(SimpleSettings, cli_parse_args=[])
     result = source._metavar_format_recurse(typing.Any)
     assert isinstance(result, str)
+
+
+# --- _sort_arg_fields uncovered branch tests ---
+
+
+def test_sort_arg_fields_subcommand_multiple_aliases_raises():
+    # Line 789: subcommand with multiple aliases raises SettingsError
+    class SubModel(BaseModel):
+        x: int = 1
+
+    class BadSubSettings(BaseSettings):
+        cmd: CliSubCommand[SubModel] = Field(  # type: ignore
+            default=..., validation_alias=AliasChoices('cmd_a', 'cmd_b')
+        )
+
+    with pytest.raises(SettingsError, match='has multiple aliases'):
+        CliSettingsSource(BadSubSettings, cli_parse_args=[])
+
+
+def test_sort_arg_fields_subcommand_non_model_type_raises():
+    # Lines 793-795: subcommand type not derived from BaseModel raises SettingsError
+    class BadSubSettings(BaseSettings):
+        cmd: CliSubCommand[str]  # type: ignore
+
+    with pytest.raises(SettingsError, match='has type not derived from BaseModel'):
+        CliSettingsSource(BadSubSettings, cli_parse_args=[])
+
+
+def test_sort_arg_fields_positional_multiple_aliases_raises():
+    # Line 800: positional arg with multiple aliases raises SettingsError
+    class BadPosSettings(BaseSettings):
+        filename: CliPositionalArg[str] = Field(  # type: ignore
+            default=..., validation_alias=AliasChoices('file_a', 'file_b')
+        )
+
+    with pytest.raises(SettingsError, match='has multiple aliases'):
+        CliSettingsSource(BadPosSettings, cli_parse_args=[])
+
+
+def test_sort_arg_fields_variadic_positional_arg():
+    # Line 807: positional arg with list annotation goes to positional_variadic_arg
+    class VarPosSettings(BaseSettings):
+        files: CliPositionalArg[List[str]]
+
+    source = CliSettingsSource(VarPosSettings, cli_parse_args=['a', 'b'])
+    result = source()
+    assert result is not None
+
+
+def test_sort_arg_fields_multiple_variadic_positional_raises():
+    # Lines 813-815: multiple variadic positional args raises SettingsError
+    class MultiVarSettings(BaseSettings):
+        files: CliPositionalArg[List[str]]
+        names: CliPositionalArg[List[str]]
+
+    with pytest.raises(SettingsError, match='has multiple variadic positional arguments'):
+        CliSettingsSource(MultiVarSettings, cli_parse_args=[])
+
+
+def test_sort_arg_fields_variadic_and_subcommand_raises():
+    # Lines 816-820: variadic positional arg combined with subcommand raises SettingsError
+    class SubModel(BaseModel):
+        x: int = 1
+
+    class MixedSettings(BaseSettings):
+        files: CliPositionalArg[List[str]]
+        cmd: CliSubCommand[SubModel]
+
+    with pytest.raises(SettingsError, match='has variadic positional arguments and subcommand arguments'):
+        CliSettingsSource(MixedSettings, cli_parse_args=[])
