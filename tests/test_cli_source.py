@@ -693,3 +693,78 @@ def test_convert_append_action_false():
     kwargs: dict[str, Any] = {'dest': 'name'}
     source._convert_append_action(kwargs, fi, False)
     assert 'action' not in kwargs
+
+
+# --- _metavar_format_recurse uncovered branch tests ---
+
+
+def test_metavar_format_recurse_function_without_locals_uses_qualname():
+    # Line 1342 else branch: function whose __qualname__ does NOT contain '<locals>'
+    source = CliSettingsSource(SimpleSettings, cli_parse_args=[])
+
+    def _top_level_like():
+        pass
+
+    # Simulate a function with no '<locals>' in qualname by using a module-level function
+    result = source._metavar_format_recurse(len)
+    # len is a built-in function; its __qualname__ == 'len', no '<locals>'
+    assert result == 'len'
+
+
+def test_metavar_format_recurse_representation_object():
+    # Line 1346: isinstance(obj, Representation) branch
+    from pydantic._internal._repr import Representation
+
+    class MyRepr(Representation):
+        __slots__ = ('value',)
+
+        def __init__(self, value: int) -> None:
+            self.value = value
+
+    source = CliSettingsSource(SimpleSettings, cli_parse_args=[])
+    obj = MyRepr(42)
+    result = source._metavar_format_recurse(obj)
+    assert result == repr(obj)
+
+
+def test_metavar_format_recurse_forward_ref():
+    # Line 1348: isinstance(obj, typing.ForwardRef) branch
+    import typing
+
+    source = CliSettingsSource(SimpleSettings, cli_parse_args=[])
+    ref = typing.ForwardRef('MyModel')
+    result = source._metavar_format_recurse(ref)
+    assert result == str(ref)
+
+
+def test_metavar_format_recurse_non_type_instance_uses_class():
+    # Line 1351: obj is not (_typing_base, _WithArgsTypes, type), so obj = obj.__class__
+    # A plain integer instance is not a type; it gets replaced by int, then returns qualname 'int'
+    source = CliSettingsSource(SimpleSettings, cli_parse_args=[])
+    result = source._metavar_format_recurse(42)
+    assert result == 'int'
+
+
+def test_metavar_format_recurse_literal_type():
+    # Line 1357: is_literal(origin) branch
+    from typing import Literal
+
+    source = CliSettingsSource(SimpleSettings, cli_parse_args=[])
+    result = source._metavar_format_recurse(Literal['a', 'b'])
+    assert 'a' in result and 'b' in result
+
+
+def test_metavar_format_recurse_generic_alias():
+    # Line 1363: isinstance(obj, _WithArgsTypes) branch (e.g. List[str])
+    source = CliSettingsSource(SimpleSettings, cli_parse_args=[])
+    result = source._metavar_format_recurse(List[str])
+    assert 'str' in result
+
+
+def test_metavar_format_recurse_typing_any_fallback():
+    # Line 1378: final else branch — typing.Any is a _Final instance, not a plain type
+    import typing
+
+    source = CliSettingsSource(SimpleSettings, cli_parse_args=[])
+    result = source._metavar_format_recurse(typing.Any)
+    assert isinstance(result, str)
