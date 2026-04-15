@@ -629,3 +629,76 @@ def test_env_settings_source_parse_none_str(monkeypatch):
     src = EnvSettingsSource(NoneStrSettings)
     data = src()
     assert data.get("name") is None
+
+
+# ---------------------------------------------------------------------------
+# PydanticBaseEnvSettingsSource.__call__ - uncovered branch tests
+# ---------------------------------------------------------------------------
+
+
+def test_call_raises_settings_error_when_get_field_value_raises(mocker):
+    """Lines 545-546: _get_resolved_field_value exception wrapped in SettingsError."""
+    src = EnvSettingsSource(SimpleSettings)
+    mocker.patch.object(src, "_get_resolved_field_value", side_effect=RuntimeError("boom"))
+    with pytest.raises(SettingsError, match='error getting value for field "name"'):
+        src()
+
+
+def test_call_raises_settings_error_when_prepare_field_value_raises(mocker):
+    """Lines 552-553: prepare_field_value ValueError wrapped in SettingsError."""
+    src = EnvSettingsSource(SimpleSettings)
+    mocker.patch.object(
+        src,
+        "_get_resolved_field_value",
+        return_value=("some_value", "name", False),
+    )
+    mocker.patch.object(src, "prepare_field_value", side_effect=ValueError("bad value"))
+    with pytest.raises(SettingsError, match='error parsing value for field "name"'):
+        src()
+
+
+def test_call_replaces_env_none_type_values_in_nested_dict(monkeypatch):
+    """Line 560: dict field_value with env_parse_none_str set triggers _replace_env_none_type_values."""
+
+    class SubModel(BaseModel):
+        x: Optional[int] = 1
+        y: Optional[str] = "hello"
+
+    class NestedNoneSettings(BaseSettings):
+        model_config = {
+            "env_prefix": "",
+            "env_nested_delimiter": "__",
+            "env_parse_none_str": "null",
+        }
+        sub: SubModel = SubModel()
+
+    monkeypatch.setenv("SUB__X", "null")
+    monkeypatch.setenv("SUB__Y", "world")
+
+    src = EnvSettingsSource(NestedNoneSettings)
+    data = src()
+    assert "sub" in data
+    assert data["sub"]["x"] is None
+    assert data["sub"]["y"] == "world"
+
+
+def test_call_replaces_field_names_case_insensitively_in_nested_dict(monkeypatch):
+    """Line 568: case_insensitive + dict field_value triggers _replace_field_names_case_insensitively."""
+
+    class SubModel(BaseModel):
+        MyField: str = "default"
+
+    class CINestedSettings(BaseSettings):
+        model_config = {
+            "env_prefix": "",
+            "env_nested_delimiter": "__",
+            "case_sensitive": False,
+        }
+        sub: SubModel = SubModel()
+
+    monkeypatch.setenv("sub__myfield", "replaced_value")
+
+    src = EnvSettingsSource(CINestedSettings)
+    data = src()
+    assert "sub" in data
+    assert data["sub"].get("MyField") == "replaced_value"
