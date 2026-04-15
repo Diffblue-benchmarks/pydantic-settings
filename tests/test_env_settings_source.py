@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from enum import Enum
 from typing import Dict, List, Optional
 
 import pytest
@@ -332,6 +333,71 @@ def test_explode_env_vars_empty_env():
     field = ComplexSettings.model_fields['mapping']
     result = src.explode_env_vars('mapping', field, {})
     assert result == {}
+
+
+def test_explode_env_vars_enum_name_conversion():
+    """Lines 261-264: FieldInfo branch with env_parse_enums=True converts enum name to value."""
+
+    class Color(Enum):
+        RED = 'red'
+        GREEN = 'green'
+
+    from pydantic import BaseModel
+
+    class SubModel(BaseModel):
+        color: Color = Color.RED
+
+    class EnumNestedSettings(BaseSettings):
+        model_config = {'env_nested_delimiter': '__'}
+        sub: SubModel = SubModel()
+
+    src = EnvSettingsSource(EnumNestedSettings, env_nested_delimiter='__', case_sensitive=True, env_parse_enums=True)
+    field = EnumNestedSettings.model_fields['sub']
+    result = src.explode_env_vars('sub', field, {'sub__color': 'GREEN'})
+    assert result['color'] == Color.GREEN
+
+
+def test_explode_env_vars_enum_name_not_found_passthrough():
+    """Lines 261-264: FieldInfo branch with env_parse_enums=True, unknown enum name passes through unchanged."""
+
+    class Status(Enum):
+        ACTIVE = 'active'
+        INACTIVE = 'inactive'
+
+    from pydantic import BaseModel
+
+    class SubModel(BaseModel):
+        status: Status = Status.ACTIVE
+
+    class EnumPassthroughSettings(BaseSettings):
+        model_config = {'env_nested_delimiter': '__'}
+        sub: SubModel = SubModel()
+
+    src = EnvSettingsSource(
+        EnumPassthroughSettings, env_nested_delimiter='__', case_sensitive=True, env_parse_enums=True
+    )
+    field = EnumPassthroughSettings.model_fields['sub']
+    result = src.explode_env_vars('sub', field, {'sub__status': 'active'})
+    # 'active' is not a member name (it's a value), so enum_val is None and env_val passes through
+    assert result['status'] == 'active'
+
+
+def test_explode_env_vars_complex_field_invalid_json_raises():
+    """Lines 276-278: ValueError is raised when allow_json_failure is False (non-union complex field)."""
+
+    from pydantic import BaseModel
+
+    class InnerModel(BaseModel):
+        items: List[str] = []
+
+    class OuterSettings(BaseSettings):
+        model_config = {'env_nested_delimiter': '__'}
+        inner: InnerModel = InnerModel()
+
+    src = EnvSettingsSource(OuterSettings, env_nested_delimiter='__', case_sensitive=True)
+    field = OuterSettings.model_fields['inner']
+    with pytest.raises(ValueError):
+        src.explode_env_vars('inner', field, {'inner__items': 'not_valid_json'})
 
 
 # ── _coerce_env_val_strict ────────────────────────────────────────────────────
