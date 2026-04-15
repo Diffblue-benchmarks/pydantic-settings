@@ -26,6 +26,33 @@ def test_import_toml_sets_global():
         assert toml_mod.tomllib is not None
 
 
+def test_import_toml_python_lt_311_tomli_is_none(mocker):
+    import pydantic_settings.sources.providers.toml as toml_mod
+
+    mock_sys = mocker.MagicMock()
+    mock_sys.version_info = (3, 10, 0)
+    mocker.patch.object(toml_mod, 'sys', mock_sys)
+    mocker.patch.object(toml_mod, 'tomli', None)
+
+    import_toml()
+
+    assert toml_mod.tomli is not None
+
+
+def test_import_toml_python_lt_311_tomli_already_set(mocker):
+    import pydantic_settings.sources.providers.toml as toml_mod
+
+    fake_tomli = mocker.MagicMock()
+    mock_sys = mocker.MagicMock()
+    mock_sys.version_info = (3, 10, 0)
+    mocker.patch.object(toml_mod, 'sys', mock_sys)
+    mocker.patch.object(toml_mod, 'tomli', fake_tomli)
+
+    import_toml()
+
+    assert toml_mod.tomli is fake_tomli
+
+
 def test_import_toml_idempotent():
     import_toml()
     import_toml()
