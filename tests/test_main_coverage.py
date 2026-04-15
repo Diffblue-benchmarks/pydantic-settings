@@ -11,7 +11,7 @@ import pytest
 from pydantic import BaseModel, Field
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, CliPositionalArg, CliSubCommand
 from pydantic_settings.main import CliApp, SettingsConfigDict
 from pydantic_settings.sources import (
     CliSettingsSource,
@@ -587,6 +587,50 @@ class TestCliAppRunSubcommand:
         model = MyModel()
         with pytest.raises((SettingsError, SystemExit)):
             CliApp.run_subcommand(model, cli_exit_on_error=False)
+
+    def test_run_subcommand_when_model_in_stack_and_subcommand_found(self):
+        """Covers line 773 (model in stack) and lines 793-802 (subcommand found & executed)."""
+        results = []
+
+        class Init(BaseModel):
+            directory: CliPositionalArg[str]
+
+            def cli_cmd(self) -> None:
+                results.append(self.directory)
+
+        class Git(BaseModel):
+            init: CliSubCommand[Init]
+
+            def cli_cmd(self) -> None:
+                CliApp.run_subcommand(self)
+
+        cmd = CliApp.run(Git, cli_args=['init', 'mydir'])
+        assert results == ['mydir']
+        assert cmd.init.directory == 'mydir'
+
+    def test_run_subcommand_raise_err_directly_when_format_help_none(self, mocker):
+        """Covers line 791: error is raised directly when _format_help is None."""
+        from pydantic_settings.exceptions import SettingsError
+
+        class Sub(BaseModel):
+            y: int = 1
+
+            def cli_cmd(self) -> None:
+                pass
+
+        class MyModel(BaseModel):
+            sub: Optional[Sub] = None
+
+        model = MyModel()
+        mock_source = mocker.MagicMock()
+        mock_source.cli_exit_on_error = False
+        mock_source._format_help = None
+        CliApp._subcommand_stack[id(model)] = (mock_source, None, ':subcommand')
+        try:
+            with pytest.raises(SettingsError):
+                CliApp.run_subcommand(model, cli_exit_on_error=False)
+        finally:
+            CliApp._subcommand_stack.pop(id(model), None)
 
 
 # ---------------------------------------------------------------------------
