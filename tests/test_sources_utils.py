@@ -152,6 +152,31 @@ def test_substitute_typevars_union_type():
     assert int in result.__args__
 
 
+def test_substitute_typevars_types_union_type_uses_or_operator():
+    """Test lines 59-65: TypeError path when types.UnionType cannot be subscripted."""
+    import sys
+    import types
+    from typing import get_args as typing_get_args
+    if sys.version_info < (3, 10):
+        pytest.skip("requires Python 3.10+ types.UnionType")
+    T = TypeVar("T")
+    # list[T] | None creates types.UnionType in Python 3.10+
+    tp = list[T] | None
+    result = _substitute_typevars(tp, {T: int})
+    assert isinstance(result, types.UnionType)
+    result_args = typing_get_args(result)
+    assert list[int] in result_args
+    assert type(None) in result_args
+
+
+def test_substitute_typevars_origin_none_returns_tp(mocker):
+    """Test line 66: return tp when origin is None but new_args differ from args."""
+    T = TypeVar("T")
+    mocker.patch("pydantic_settings.sources.utils.get_origin", return_value=None)
+    result = _substitute_typevars(List[T], {T: int})
+    assert result is List[T]
+
+
 # ---------------------------------------------------------------------------
 # _resolve_type_alias
 # ---------------------------------------------------------------------------
