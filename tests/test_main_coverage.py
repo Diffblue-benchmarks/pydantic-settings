@@ -444,6 +444,38 @@ class TestCliAppRunCliCmd:
         result = CliApp._run_cli_cmd(model, 'cli_cmd', is_required=True)
         assert result is model
 
+    def test_calls_async_method_with_running_event_loop(self):
+        results = []
+
+        class ModelWithAsyncCmd(BaseModel):
+            x: int = 1
+
+            async def cli_cmd(self) -> None:
+                results.append(self.x)
+
+        model = ModelWithAsyncCmd()
+
+        async def run_in_loop() -> None:
+            CliApp._run_cli_cmd(model, 'cli_cmd', is_required=True)
+
+        asyncio.run(run_in_loop())
+        assert results == [1]
+
+    def test_async_exception_propagated_with_running_event_loop(self):
+        class ModelWithFailingAsyncCmd(BaseModel):
+            x: int = 1
+
+            async def cli_cmd(self) -> None:
+                raise RuntimeError('thread async error')
+
+        model = ModelWithFailingAsyncCmd()
+
+        async def run_in_loop() -> None:
+            with pytest.raises(RuntimeError, match='thread async error'):
+                CliApp._run_cli_cmd(model, 'cli_cmd', is_required=True)
+
+        asyncio.run(run_in_loop())
+
 
 # ---------------------------------------------------------------------------
 # CliApp.run
