@@ -631,6 +631,46 @@ def test_verify_cli_flag_annotations_non_bool_raises():
         CliSettingsSource(BadFlagSettings, cli_parse_args=[], cli_implicit_flags=True)
 
 
+def test_verify_cli_flag_annotations_explicit_flag_non_bool_raises():
+    from pydantic_settings import CliExplicitFlag
+
+    class BadExplicitFlagSettings(BaseSettings):
+        flag: CliExplicitFlag[str] = 'no'  # type: ignore
+
+    with pytest.raises(SettingsError, match='CliExplicitFlag'):
+        CliSettingsSource(BadExplicitFlagSettings, cli_parse_args=[])
+
+
+def test_verify_cli_flag_annotations_toggle_flag_non_bool_default_raises():
+    from pydantic_settings import CliToggleFlag
+
+    class BadToggleFlagSettings(BaseSettings):
+        flag: CliToggleFlag = 'not_a_bool'  # type: ignore
+
+    with pytest.raises(SettingsError, match='must have a default bool value'):
+        CliSettingsSource(BadToggleFlagSettings, cli_parse_args=[])
+
+
+def test_verify_cli_flag_annotations_toggle_flag_bool_default_valid():
+    from pydantic_settings import CliToggleFlag
+
+    class ValidToggleFlagSettings(BaseSettings):
+        flag: CliToggleFlag[bool] = True
+
+    source = CliSettingsSource(ValidToggleFlagSettings, cli_parse_args=[])
+    assert source is not None
+
+
+def test_verify_cli_flag_annotations_dual_flag_non_bool_raises():
+    from pydantic_settings import CliDualFlag
+
+    class BadDualFlagSettings(BaseSettings):
+        flag: CliDualFlag[str] = 'no'  # type: ignore
+
+    with pytest.raises(SettingsError, match='CliDualFlag'):
+        CliSettingsSource(BadDualFlagSettings, cli_parse_args=[])
+
+
 def test_sort_arg_fields_subcommand_with_default_raises():
     class SubModel(BaseModel):
         x: int = 1
