@@ -721,6 +721,85 @@ def test_merge_parsed_list_simple():
     assert result is not None
 
 
+def test_merge_parsed_list_non_string_item_breaks():
+    # Line 672: non-string item triggers break
+    source = CliSettingsSource(SimpleSettings, cli_parse_args=[])
+    result = source._merge_parsed_list([42, 'b'], 'some_field')
+    assert result == ''
+
+
+def test_merge_parsed_list_val_wrapped_in_brackets():
+    # Line 675: val that starts and ends with brackets gets stripped
+    source = CliSettingsSource(SimpleSettings, cli_parse_args=[])
+    result = source._merge_parsed_list(['[a,b]'], 'some_field')
+    assert 'a' in result
+    assert 'b' in result
+
+
+def test_merge_parsed_list_starts_with_comma():
+    # Lines 679-680: val that starts with comma triggers _consume_comma
+    source = CliSettingsSource(SimpleSettings, cli_parse_args=[])
+    result = source._merge_parsed_list([',a'], 'some_field')
+    assert result is not None
+    assert 'a' in result
+
+
+def test_merge_parsed_list_object_value():
+    # Line 683: val starting with '{' triggers _consume_object_or_array
+    source = CliSettingsSource(SimpleSettings, cli_parse_args=[])
+    result = source._merge_parsed_list(['{"key": "val"}'], 'some_field')
+    assert result is not None
+    assert 'key' in result
+
+
+def test_merge_parsed_list_array_nested_value():
+    # Line 683: val starting with '[' inside content triggers _consume_object_or_array
+    source = CliSettingsSource(SimpleSettings, cli_parse_args=[])
+    result = source._merge_parsed_list(['[[1,2],[3,4]]'], 'some_field')
+    assert result is not None
+
+
+def test_merge_parsed_list_str_merge_type():
+    # Line 697: merge_type is str returns merged_list[0]
+    source = CliSettingsSource(SimpleSettings, cli_parse_args=[])
+    source._cli_dict_args['my_str_field'] = str
+    result = source._merge_parsed_list(['hello world'], 'my_str_field')
+    assert result == '"hello world"'
+
+
+def test_merge_parsed_list_dict_merge_type():
+    # Lines 701-704: merge_type is dict merges items into a dict
+    source = CliSettingsSource(SimpleSettings, cli_parse_args=[])
+    source._cli_dict_args['my_dict_field'] = dict
+    result = source._merge_parsed_list(['key=val'], 'my_dict_field')
+    import json as _json
+    parsed = _json.loads(result)
+    assert parsed == {'key': 'val'}
+
+
+def test_merge_parsed_list_value_error_fallback_uses_inferred_type():
+    # Lines 687-688, 690-691: ValueError with merge_type != inferred_type falls back to inferred_type
+    source = CliSettingsSource(SimpleSettings, cli_parse_args=[])
+    source._cli_dict_args['my_union_field'] = Union[dict, str]
+    result = source._merge_parsed_list(['notadict'], 'my_union_field')
+    assert result == '"notadict"'
+
+
+def test_merge_parsed_list_value_error_reraise_as_settings_error():
+    # Lines 688-689, 705-706: ValueError reraises when merge_type is inferred_type, wrapped as SettingsError
+    source = CliSettingsSource(SimpleSettings, cli_parse_args=[])
+    source._cli_dict_args['my_dict_field'] = dict
+    with pytest.raises(SettingsError, match='Parsing error encountered for my_dict_field'):
+        source._merge_parsed_list(['notadict'], 'my_dict_field')
+
+
+def test_merge_parsed_list_empty_string_trailing_comma():
+    # Line 694: empty val triggers _consume_comma after while loop
+    source = CliSettingsSource(SimpleSettings, cli_parse_args=[])
+    result = source._merge_parsed_list([''], 'some_field')
+    assert result is not None
+
+
 def test_connect_parser_method_none_raises_on_call():
     source = CliSettingsSource(SimpleSettings, cli_parse_args=[])
     none_method = source._connect_parser_method(None, 'some_method')
