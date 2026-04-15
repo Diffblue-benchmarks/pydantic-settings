@@ -602,6 +602,63 @@ def test_replace_field_names_no_model_fields():
     assert result == {"anything": "val"}
 
 
+def test_replace_field_names_case_insensitively_optional_annotation():
+    """Lines 454-459: field with Optional annotation unwraps the inner type."""
+
+    class SubModel(BaseModel):
+        MyField: str = "default"
+
+    class CISettings(BaseSettings):
+        model_config = {"env_prefix": "", "env_nested_delimiter": "__"}
+        sub: Optional[SubModel] = None
+
+    src = EnvSettingsSource(CISettings)
+    field = CISettings.model_fields["sub"]
+    result = src._replace_field_names_case_insensitively(field, {"myfield": "replaced"})
+    assert "MyField" in result
+    assert result["MyField"] == "replaced"
+
+
+def test_replace_field_names_case_insensitively_unknown_key():
+    """Lines 478-479: key not found in sub-model fields is kept as-is."""
+
+    class SubModel(BaseModel):
+        MyField: str = "default"
+
+    class CISettings(BaseSettings):
+        model_config = {"env_prefix": "", "env_nested_delimiter": "__"}
+        sub: SubModel = SubModel()
+
+    src = EnvSettingsSource(CISettings)
+    field = CISettings.model_fields["sub"]
+    result = src._replace_field_names_case_insensitively(field, {"unknown_key": "some_val"})
+    assert result == {"unknown_key": "some_val"}
+
+
+def test_replace_field_names_case_insensitively_nested_dict_recurse():
+    """Line 486: value is a dict with a BaseModel sub-field triggers recursive call."""
+
+    class SubSubModel(BaseModel):
+        VaL3: str = "default"
+
+    class SubModel(BaseModel):
+        VAL1: str = "v1"
+        SUB_sub: SubSubModel = SubSubModel()
+
+    class CISettings(BaseSettings):
+        model_config = {"env_prefix": "", "env_nested_delimiter": "__"}
+        nested: SubModel = SubModel()
+
+    src = EnvSettingsSource(CISettings)
+    field = CISettings.model_fields["nested"]
+    result = src._replace_field_names_case_insensitively(
+        field, {"val1": "v1", "sub_SUB": {"vAl3": "v3"}}
+    )
+    assert result["VAL1"] == "v1"
+    assert "SUB_sub" in result
+    assert result["SUB_sub"]["VaL3"] == "v3"
+
+
 def test_get_resolved_field_value_returns_preferred_key():
     class AliasedSettings(BaseSettings):
         model_config = {"env_prefix": ""}
