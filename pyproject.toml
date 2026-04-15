@@ -93,10 +93,6 @@ filterwarnings = [
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
 [tool.coverage.run]
-include = [
-    "pydantic_settings/**/*.py",
-    "tests/**/*.py",
-]
 branch = true
 
 # https://coverage.readthedocs.io/en/latest/config.html#report
