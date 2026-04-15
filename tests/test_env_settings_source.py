@@ -10,6 +10,7 @@ from pydantic import Field, StrictBool, StrictInt
 from pydantic.fields import FieldInfo
 
 from pydantic_settings import BaseSettings, EnvSettingsSource
+from pydantic_settings.sources.types import EnvNoneType
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -205,6 +206,55 @@ def test_prepare_field_value_complex_dict_merge(monkeypatch):
     result = src.prepare_field_value('mapping', field, '{"a": 1}', True)
     assert isinstance(result, dict)
     assert result.get('a') == 1
+
+
+def test_prepare_field_value_env_parse_enums_converts_name():
+    """Lines 117-118: env_parse_enums=True converts enum member name to enum value."""
+
+    class Color(Enum):
+        RED = 'red'
+        BLUE = 'blue'
+
+    class EnumSettings(BaseSettings):
+        color: Color = Color.RED
+
+    src = EnvSettingsSource(EnumSettings, env_parse_enums=True)
+    field = EnumSettings.model_fields['color']
+    result = src.prepare_field_value('color', field, 'BLUE', False)
+    assert result == Color.BLUE
+
+
+def test_prepare_field_value_env_parse_enums_unknown_name_passthrough():
+    """Lines 117-118: env_parse_enums=True, unknown enum name passes through unchanged."""
+
+    class Color(Enum):
+        RED = 'red'
+        BLUE = 'blue'
+
+    class EnumSettings(BaseSettings):
+        color: Color = Color.RED
+
+    src = EnvSettingsSource(EnumSettings, env_parse_enums=True)
+    field = EnumSettings.model_fields['color']
+    result = src.prepare_field_value('color', field, 'red', False)
+    assert result == 'red'
+
+
+def test_prepare_field_value_complex_env_none_type_returns_value():
+    """Line 122: When value is EnvNoneType and field is complex, value is returned as-is."""
+    src = EnvSettingsSource(ComplexSettings)
+    field = ComplexSettings.model_fields['items']
+    none_val = EnvNoneType('null')
+    result = src.prepare_field_value('items', field, none_val, True)
+    assert result is none_val
+
+
+def test_prepare_field_value_complex_invalid_json_raises():
+    """Lines 132-134: ValueError raised when decode_complex_value fails and allow_parse_failure is False."""
+    src = EnvSettingsSource(ComplexSettings)
+    field = ComplexSettings.model_fields['items']
+    with pytest.raises(ValueError):
+        src.prepare_field_value('items', field, 'not_valid_json', True)
 
 
 # ── _field_is_complex ─────────────────────────────────────────────────────────
