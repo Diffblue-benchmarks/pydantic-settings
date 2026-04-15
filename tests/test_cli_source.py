@@ -439,6 +439,30 @@ def test_consume_number():
     assert '42' in merged_list
 
 
+def test_consume_string_none_str_converts_to_null():
+    source = CliSettingsSource(SimpleSettings, cli_parse_args=[], cli_parse_none_str='None')
+    merged_list: list[str] = []
+    remainder = source._consume_string_or_number('None,rest', merged_list, list)
+    assert merged_list == ['null']
+    assert remainder == ',rest'
+
+
+def test_consume_string_or_number_dict_type_key_val():
+    source = CliSettingsSource(SimpleSettings, cli_parse_args=[])
+    merged_list: list[str] = []
+    import json
+
+    remainder = source._consume_string_or_number('key=val,rest', merged_list, dict)
+    assert merged_list == [json.dumps({'key': 'val'})]
+    assert remainder == ',rest'
+
+
+def test_consume_string_or_number_dict_type_quoted_key_raises():
+    source = CliSettingsSource(SimpleSettings, cli_parse_args=[])
+    with pytest.raises(ValueError, match='Dictionary key=val parameter is a quoted string'):
+        source._consume_string_or_number('"key=val"', [], dict)
+
+
 # --- _flatten_serialized_args tests ---
 
 
