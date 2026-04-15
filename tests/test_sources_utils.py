@@ -384,6 +384,33 @@ def test_annotation_contains_types_is_instance():
     assert _annotation_contains_types(T, (TypeVar,), is_instance=True)
 
 
+def test_annotation_contains_types_collect_origin_match():
+    # Line 181: origin in types and collect is not None -> collect.add(annotation)
+    found: set[Any] = set()
+    _annotation_contains_types(List[int], (list,), collect=found)
+    assert List[int] in found
+
+
+def test_annotation_contains_types_is_instance_origin_returns_true():
+    # Lines 183-184: is_instance=True, isinstance(origin, type_) is True, collect is None -> return True
+    assert _annotation_contains_types(List[int], (type,), is_instance=True)
+
+
+def test_annotation_contains_types_is_instance_origin_collect():
+    # Line 185: is_instance=True, isinstance(origin, type_) is True, collect is not None -> collect.add
+    found: set[Any] = set()
+    _annotation_contains_types(List[int], (type,), is_instance=True, collect=found)
+    assert List[int] in found
+
+
+def test_annotation_contains_types_is_instance_annotation_collect():
+    # Line 202: is_instance=True, isinstance(annotation, type_) is True, collect is not None -> collect.add
+    T = TypeVar("T")
+    found: set[Any] = set()
+    _annotation_contains_types(T, (TypeVar,), is_instance=True, collect=found)
+    assert T in found
+
+
 # ---------------------------------------------------------------------------
 # _strip_annotated
 # ---------------------------------------------------------------------------
