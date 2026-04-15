@@ -326,6 +326,18 @@ def test_union_is_complex_with_basemodel():
     assert _union_is_complex(Optional[M], [])
 
 
+def test_union_is_complex_annotated_arg_with_json_suppresses_complexity():
+    # Covers lines 146-148: Annotated arg whose metadata contains Json → continue
+    annotation = Union[Annotated[Union[List[int], str], Json()], None]
+    assert not _union_is_complex(annotation, [])
+
+
+def test_union_is_complex_annotated_arg_without_json_recurses_into_inner_union():
+    # Covers lines 146-147 (no Json), 150-151: Annotated wrapping a complex union → recurse
+    annotation = Union[Annotated[Union[List[int], str], "meta"], None]
+    assert _union_is_complex(annotation, [])
+
+
 # ---------------------------------------------------------------------------
 # _union_has_strict_types
 # ---------------------------------------------------------------------------
