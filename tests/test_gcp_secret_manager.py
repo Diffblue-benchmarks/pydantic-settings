@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Iterator
-from typing import Any
+from typing import Annotated, Any
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
@@ -76,6 +76,53 @@ def _mock_secret_client(secrets: dict[str, str | None] | None = None, secret_nam
             resp.payload.data.decode.return_value = secrets[secret_name]
             return resp
         raise Exception(f'Secret {secret_name} not found')
+
+    client.access_secret_version.side_effect = _access
+
+    return client
+
+
+def _mock_version_aware_client(
+    secrets_versions: dict[str, dict[str, str | None]],
+    secret_names: list[str] | None = None,
+):
+    """Return a mock SecretManagerServiceClient that distinguishes secret versions.
+
+    Args:
+        secrets_versions: mapping of secret-name -> {version -> value}.
+        secret_names: list of secret names returned by list_secrets.
+    """
+    if secret_names is None:
+        secret_names = list(secrets_versions.keys())
+
+    client = MagicMock()
+    client.common_project_path.return_value = 'projects/my-project'
+
+    secret_objs = [_make_secret_obj(f'projects/my-project/secrets/{n}') for n in secret_names]
+    client.list_secrets.return_value = iter(secret_objs)
+
+    def _parse(name: str) -> dict[str, str]:
+        parts = name.split('/')
+        return {'secret': parts[-1] if parts else ''}
+
+    client.parse_secret_path.side_effect = _parse
+
+    def _version_path(project_id: str, secret_name: str, version: str) -> str:
+        return f'projects/{project_id}/secrets/{secret_name}/versions/{version}'
+
+    client.secret_version_path.side_effect = _version_path
+
+    def _access(name: str) -> MagicMock:
+        parts = name.split('/')
+        secret_name = parts[3] if len(parts) > 3 else ''
+        version = parts[5] if len(parts) > 5 else 'latest'
+        if secret_name in secrets_versions:
+            versions = secrets_versions[secret_name]
+            if version in versions and versions[version] is not None:
+                resp = MagicMock()
+                resp.payload.data.decode.return_value = versions[version]
+                return resp
+        raise Exception(f'Secret {secret_name} version {version} not found')
 
     client.access_secret_version.side_effect = _access
 
@@ -515,3 +562,127 @@ class TestGoogleSecretManagerSettingsSource:
             env_prefix='APP_',
         )
         assert source.env_prefix == 'APP_'
+
+    # -------------------------------------------------------------------
+    # Version-specific code path in get_field_value (lines 206-222)
+    # -------------------------------------------------------------------
+
+    def test_get_field_value_version_path_found(self):
+        """Version-specific path returns value for the specified version."""
+        client = _mock_version_aware_client({
+            'my_secret': {'7': 'v7_value', 'latest': 'latest_value'},
+        })
+
+        class VersionedSettings(BaseSettings):
+            model_config = {'extra': 'ignore'}
+            my_secret: Annotated[str, SecretVersion('7')] = 'default'
+
+        source = GoogleSecretManagerSettingsSource(
+            VersionedSettings,
+            credentials=_MockCredentials(),
+            project_id='test-project',
+            secret_client=client,
+            case_sensitive=True,
+        )
+        field_info = VersionedSettings.model_fields['my_secret']
+        val, key, is_complex = source.get_field_value(field_info, 'my_secret')
+        assert val == 'v7_value'
+        assert is_complex is False
+
+    def test_get_field_value_version_path_populate_by_name(self):
+        """Version path with populate_by_name returns field_name as key."""
+        client = _mock_version_aware_client({
+            'my_secret': {'2': 'v2_value'},
+        })
+
+        class PopVersionSettings(BaseSettings):
+            model_config = {'extra': 'ignore', 'populate_by_name': True}
+            my_secret: Annotated[str, SecretVersion('2')] = 'default'
+
+        source = GoogleSecretManagerSettingsSource(
+            PopVersionSettings,
+            credentials=_MockCredentials(),
+            project_id='test-project',
+            secret_client=client,
+            case_sensitive=True,
+        )
+        field_info = PopVersionSettings.model_fields['my_secret']
+        val, key, is_complex = source.get_field_value(field_info, 'my_secret')
+        assert val == 'v2_value'
+        assert key == 'my_secret'
+
+    def test_get_field_value_version_path_secret_not_in_mapping(self):
+        """Version path when secret not in mapping returns None."""
+        client = _mock_version_aware_client({
+            'other_secret': {'1': 'val'},
+        })
+
+        class MissingVersionSettings(BaseSettings):
+            model_config = {'extra': 'ignore'}
+            my_secret: Annotated[str, SecretVersion('1')] = 'default'
+
+        source = GoogleSecretManagerSettingsSource(
+            MissingVersionSettings,
+            credentials=_MockCredentials(),
+            project_id='test-project',
+            secret_client=client,
+            case_sensitive=True,
+        )
+        field_info = MissingVersionSettings.model_fields['my_secret']
+        val, key, is_complex = source.get_field_value(field_info, 'my_secret')
+        assert val is None
+        assert key == 'my_secret'
+        assert is_complex is False
+
+    def test_get_field_value_version_path_value_none(self):
+        """Version access returns None (version not available), falls through to not-found."""
+        client = _mock_version_aware_client({
+            'my_secret': {'latest': 'latest_val'},
+        })
+
+        class NoneVersionSettings(BaseSettings):
+            model_config = {'extra': 'ignore'}
+            my_secret: Annotated[str, SecretVersion('5')] = 'default'
+
+        source = GoogleSecretManagerSettingsSource(
+            NoneVersionSettings,
+            credentials=_MockCredentials(),
+            project_id='test-project',
+            secret_client=client,
+            case_sensitive=True,
+        )
+        field_info = NoneVersionSettings.model_fields['my_secret']
+        val, key, is_complex = source.get_field_value(field_info, 'my_secret')
+        assert val is None
+        assert key == 'my_secret'
+        assert is_complex is False
+
+    def test_get_field_value_version_path_case_insensitive_fallback(self, mocker):
+        """Case-insensitive fallback for secret name lookup in version path."""
+        client = _mock_version_aware_client({
+            'my_secret': {'3': 'ci_v3_value'},
+        })
+
+        class CIVersionSettings(BaseSettings):
+            model_config = {'extra': 'ignore'}
+            my_secret: Annotated[str, SecretVersion('3')] = 'default'
+
+        source = GoogleSecretManagerSettingsSource(
+            CIVersionSettings,
+            credentials=_MockCredentials(),
+            project_id='test-project',
+            secret_client=client,
+            case_sensitive=False,
+        )
+
+        # Mock _extract_field_info to return a mixed-case env_name
+        # that won't match directly but will match when lowered
+        mocker.patch.object(
+            source,
+            '_extract_field_info',
+            return_value=[('my_secret', 'My_Secret', False)],
+        )
+
+        field_info = CIVersionSettings.model_fields['my_secret']
+        val, key, is_complex = source.get_field_value(field_info, 'my_secret')
+        assert val == 'ci_v3_value'
