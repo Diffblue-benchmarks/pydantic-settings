@@ -695,3 +695,157 @@ class TestIntegration:
 
         settings = PartialNestedSettings()
         assert settings.nested.inner_name == 'inner_default'
+
+
+# --- Tests for _replace_field_names_case_insensitively uncovered paths ---
+
+
+class TestReplaceFieldNamesCaseInsensitivelyUncoveredPaths:
+    """Tests targeting uncovered lines 454-459, 464-465, and 486."""
+
+    def test_optional_submodel_extracts_inner_type(self):
+        """Test lines 454-459: When field is Optional[SubModel], extract inner type."""
+
+        class InnerModel(BaseModel):
+            FieldOne: str = ''
+            FieldTwo: str = ''
+
+        class SettingsWithOptionalNested(BaseSettings):
+            optional_nested: Optional[InnerModel] = None
+
+        source = ConcreteEnvSettingsSource(SettingsWithOptionalNested, case_sensitive=False)
+        field_info = SettingsWithOptionalNested.model_fields['optional_nested']
+        result = source._replace_field_names_case_insensitively(
+            field_info, {'fieldone': 'value1', 'fieldtwo': 'value2'}
+        )
+        assert result == {'FieldOne': 'value1', 'FieldTwo': 'value2'}
+
+    def test_optional_none_union_unwraps_correctly(self):
+        """Test lines 454-459: Specific test for Union[X, None] unwrapping."""
+
+        class DeepModel(BaseModel):
+            DeepField: str = ''
+
+        class SettingsWithOptional(BaseSettings):
+            deep: Optional[DeepModel] = None
+
+        source = ConcreteEnvSettingsSource(SettingsWithOptional, case_sensitive=False)
+        field_info = SettingsWithOptional.model_fields['deep']
+        result = source._replace_field_names_case_insensitively(
+            field_info, {'deepfield': 'test_value'}
+        )
+        assert result == {'DeepField': 'test_value'}
+
+    def test_annotation_without_model_fields_returns_unchanged(self):
+        """Test lines 464-465: When annotation has no model_fields, return value unchanged."""
+
+        class SettingsWithSimpleType(BaseSettings):
+            simple: str = ''
+
+        source = ConcreteEnvSettingsSource(SettingsWithSimpleType, case_sensitive=False)
+        field_info = SettingsWithSimpleType.model_fields['simple']
+        result = source._replace_field_names_case_insensitively(
+            field_info, {'any_key': 'any_value'}
+        )
+        assert result == {'any_key': 'any_value'}
+
+    def test_annotation_dict_type_returns_unchanged(self):
+        """Test lines 464-465: dict type has no model_fields."""
+
+        class SettingsWithDict(BaseSettings):
+            data: dict[str, str] = {}
+
+        source = ConcreteEnvSettingsSource(SettingsWithDict, case_sensitive=False)
+        field_info = SettingsWithDict.model_fields['data']
+        result = source._replace_field_names_case_insensitively(
+            field_info, {'lowercase_key': 'value'}
+        )
+        assert result == {'lowercase_key': 'value'}
+
+    def test_recursive_nested_basemodel(self):
+        """Test line 486: Recursive call for nested BaseModel within dict value."""
+
+        class Level2Model(BaseModel):
+            Level2Field: str = ''
+
+        class Level1Model(BaseModel):
+            Level1Field: str = ''
+            nested_level2: Level2Model = Level2Model()
+
+        class SettingsWithDeepNested(BaseSettings):
+            root: Level1Model = Level1Model()
+
+        source = ConcreteEnvSettingsSource(SettingsWithDeepNested, case_sensitive=False)
+        field_info = SettingsWithDeepNested.model_fields['root']
+        result = source._replace_field_names_case_insensitively(
+            field_info, {
+                'level1field': 'top_value',
+                'nested_level2': {'level2field': 'deep_value'}
+            }
+        )
+        assert result == {
+            'Level1Field': 'top_value',
+            'nested_level2': {'Level2Field': 'deep_value'}
+        }
+
+    def test_three_level_nested_basemodel(self):
+        """Test line 486: Three levels of nested BaseModels for recursive calls."""
+
+        class Level3Model(BaseModel):
+            Val3: str = ''
+
+        class Level2Model(BaseModel):
+            Val2: str = ''
+            sub3: Level3Model = Level3Model()
+
+        class Level1Model(BaseModel):
+            Val1: str = ''
+            sub2: Level2Model = Level2Model()
+
+        class SettingsDeepNested(BaseSettings):
+            top: Level1Model = Level1Model()
+
+        source = ConcreteEnvSettingsSource(SettingsDeepNested, case_sensitive=False)
+        field_info = SettingsDeepNested.model_fields['top']
+        result = source._replace_field_names_case_insensitively(
+            field_info, {
+                'val1': 'v1',
+                'sub2': {
+                    'val2': 'v2',
+                    'sub3': {'val3': 'v3'}
+                }
+            }
+        )
+        assert result == {
+            'Val1': 'v1',
+            'sub2': {
+                'Val2': 'v2',
+                'sub3': {'Val3': 'v3'}
+            }
+        }
+
+    def test_optional_nested_with_recursive_call(self):
+        """Test lines 454-459 and 486: Optional nested model with recursive replacement."""
+
+        class InnerLevel(BaseModel):
+            InnerField: str = ''
+
+        class OuterLevel(BaseModel):
+            OuterField: str = ''
+            inner: InnerLevel = InnerLevel()  # Non-optional for recursive path
+
+        class SettingsOptionalDeep(BaseSettings):
+            outer: Optional[OuterLevel] = None  # Top level is Optional
+
+        source = ConcreteEnvSettingsSource(SettingsOptionalDeep, case_sensitive=False)
+        field_info = SettingsOptionalDeep.model_fields['outer']
+        result = source._replace_field_names_case_insensitively(
+            field_info, {
+                'outerfield': 'outer_val',
+                'inner': {'innerfield': 'inner_val'}
+            }
+        )
+        assert result == {
+            'OuterField': 'outer_val',
+            'inner': {'InnerField': 'inner_val'}
+        }
