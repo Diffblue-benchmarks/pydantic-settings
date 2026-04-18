@@ -7,7 +7,7 @@ import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Annotated, Any, Optional
 from unittest.mock import patch
 
 import pytest
@@ -184,6 +184,70 @@ class TestGetSubcommand:
         settings = SimpleSettings()
         with pytest.raises(SystemExit):
             get_subcommand(settings, is_required=True, cli_exit_on_error=None)
+
+    def test_cli_exit_on_error_defaults_true_for_plain_model(self):
+        """Line 69: cli_exit_on_error defaults to True for a plain BaseModel (not BaseSettings)."""
+
+        class PlainModel(BaseModel):
+            name: str = 'test'
+
+        model = PlainModel()
+        # is_model_class returns True but cli_exit_on_error config not set,
+        # so it stays None and falls through to the default True path (line 69)
+        with pytest.raises(SystemExit, match='CLI subcommand is required but no subcommands were found'):
+            get_subcommand(model, is_required=True, cli_exit_on_error=None)
+
+    def test_subcommand_field_returns_value_when_set(self):
+        """Lines 74-75: return subcommand value when the field is not None."""
+
+        class SubCmd(BaseSettings):
+            model_config = SettingsConfigDict(env_prefix='', extra='ignore')
+            value: str = 'hello'
+
+        class WithSubcommand(BaseSettings):
+            model_config = SettingsConfigDict(env_prefix='', extra='ignore')
+            cmd: Annotated[Optional[SubCmd], _CliSubCommand] = None
+
+        sub = SubCmd()
+        model = WithSubcommand.model_construct(cmd=sub)
+        result = get_subcommand(model, is_required=True, cli_exit_on_error=False)
+        assert result is sub
+
+    def test_subcommand_field_none_appended_to_subcommands(self):
+        """Line 76: when subcommand field is None, its name is listed in the error."""
+
+        class SubCmd(BaseSettings):
+            model_config = SettingsConfigDict(env_prefix='', extra='ignore')
+            value: str = 'hello'
+
+        class WithSubcommand(BaseSettings):
+            model_config = SettingsConfigDict(env_prefix='', extra='ignore')
+            cmd: Annotated[Optional[SubCmd], _CliSubCommand] = None
+
+        model = WithSubcommand.model_construct(cmd=None)
+        with pytest.raises(SettingsError, match='cmd'):
+            get_subcommand(model, is_required=True, cli_exit_on_error=False)
+
+    def test_subcommand_returns_first_set_subcommand(self):
+        """Lines 74-75: with multiple subcommand fields, return the first non-None one."""
+
+        class SubA(BaseSettings):
+            model_config = SettingsConfigDict(env_prefix='', extra='ignore')
+            val: str = 'a'
+
+        class SubB(BaseSettings):
+            model_config = SettingsConfigDict(env_prefix='', extra='ignore')
+            val: str = 'b'
+
+        class MultiSub(BaseSettings):
+            model_config = SettingsConfigDict(env_prefix='', extra='ignore')
+            cmd_a: Annotated[Optional[SubA], _CliSubCommand] = None
+            cmd_b: Annotated[Optional[SubB], _CliSubCommand] = None
+
+        sub_b = SubB()
+        model = MultiSub.model_construct(cmd_a=None, cmd_b=sub_b)
+        result = get_subcommand(model, is_required=True, cli_exit_on_error=False)
+        assert result is sub_b
 
 
 # ---------------------------------------------------------------------------
