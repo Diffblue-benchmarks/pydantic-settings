@@ -491,6 +491,85 @@ class TestCoerceEnvValStrict:
         # Should return original value on validation error
         assert result is not None
 
+    def test_coerce_env_val_strict_parse_none_str_returns_value(self):
+        """Test _coerce_env_val_strict returns parse_none_str value unchanged (line 304)."""
+        class Settings(BaseSettings):
+            model_config = {"strict": True}
+            field1: Optional[str] = None
+
+        source = EnvSettingsSource(Settings, env_parse_none_str="null")
+        field_info = Settings.model_fields["field1"]
+
+        result = source._coerce_env_val_strict(field_info, "null")
+        # Line 304: should return value directly without coercing
+        assert result == "null"
+
+    def test_coerce_env_val_strict_json_decode_error(self):
+        """Test _coerce_env_val_strict with invalid JSON (line 312-313)."""
+        class Settings(BaseSettings):
+            model_config = {"strict": True}
+            value: bool = False
+
+        source = EnvSettingsSource(Settings)
+        field_info = Settings.model_fields["value"]
+
+        # "not_valid_json" is not valid JSON, should trigger json.JSONDecodeError
+        # This error is not caught and will propagate, so return original value
+        with pytest.raises(ValueError):
+            source._coerce_env_val_strict(field_info, "not_valid_json")
+
+    def test_coerce_env_val_strict_json_string_result(self):
+        """Test _coerce_env_val_strict when JSON decode returns string (line 316)."""
+        class Settings(BaseSettings):
+            model_config = {"strict": True}
+            value: bool = False
+
+        source = EnvSettingsSource(Settings)
+        field_info = Settings.model_fields["value"]
+
+        # JSON string that decodes to a string, which cannot be coerced to bool
+        # When decoded value is still a string, line 316 raises, caught at 317, returns original
+        result = source._coerce_env_val_strict(field_info, '"not_a_bool"')
+        assert result == '"not_a_bool"'
+
+    def test_coerce_env_val_strict_with_strict_bool(self):
+        """Test _coerce_env_val_strict successfully coerces string to bool via JSON."""
+        class Settings(BaseSettings):
+            model_config = {"strict": True}
+            flag: bool = False
+
+        source = EnvSettingsSource(Settings)
+        field_info = Settings.model_fields["flag"]
+
+        # JSON true coerces to bool True
+        result = source._coerce_env_val_strict(field_info, "true")
+        assert result is True
+
+    def test_coerce_env_val_strict_with_strict_int(self):
+        """Test _coerce_env_val_strict successfully coerces string to int."""
+        class Settings(BaseSettings):
+            model_config = {"strict": True}
+            count: int = 0
+
+        source = EnvSettingsSource(Settings)
+        field_info = Settings.model_fields["count"]
+
+        result = source._coerce_env_val_strict(field_info, "42")
+        assert result == 42
+
+    def test_coerce_env_val_strict_non_string_value(self):
+        """Test _coerce_env_val_strict with non-string value."""
+        class Settings(BaseSettings):
+            model_config = {"strict": True}
+            value: int = 0
+
+        source = EnvSettingsSource(Settings)
+        field_info = Settings.model_fields["value"]
+
+        # Non-string value should be returned as-is
+        result = source._coerce_env_val_strict(field_info, 42)
+        assert result == 42
+
 
 class TestRepr:
     """Test EnvSettingsSource.__repr__ method."""
