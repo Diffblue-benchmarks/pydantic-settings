@@ -2,6 +2,7 @@
 
 import json
 import os
+from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 from unittest.mock import patch
 
@@ -498,3 +499,142 @@ class TestMaxSplitNestedDelimiter:
             source = EnvSettingsSource(MaxSplitSettings)
             assert source.env_nested_max_split == 2
             assert source.maxsplit == 1
+
+
+class TestExplodeEnvVarsEnumParsing:
+    """Tests for lines 263-264: env_parse_enums in explode_env_vars."""
+
+    def test_explode_env_vars_with_enum_parse(self):
+        class Color(Enum):
+            RED = 'red'
+            GREEN = 'green'
+            BLUE = 'blue'
+
+        class SubWithEnum(BaseModel):
+            color: Color = Color.RED
+
+        class EnumNestedSettings(BaseSettings):
+            sub: SubWithEnum = SubWithEnum()
+
+            model_config = {'env_nested_delimiter': '__'}
+
+        with patch.dict(os.environ, {}, clear=True):
+            source = EnvSettingsSource(EnumNestedSettings, env_parse_enums=True)
+            field = EnumNestedSettings.model_fields['sub']
+            env_vars = {'sub__color': 'GREEN'}
+            result = source.explode_env_vars('sub', field, env_vars)
+            assert result['color'] == Color.GREEN
+
+    def test_explode_env_vars_with_enum_parse_unknown_member(self):
+        class Color(Enum):
+            RED = 'red'
+            GREEN = 'green'
+
+        class SubWithEnum(BaseModel):
+            color: Color = Color.RED
+
+        class EnumNestedSettings(BaseSettings):
+            sub: SubWithEnum = SubWithEnum()
+
+            model_config = {'env_nested_delimiter': '__'}
+
+        with patch.dict(os.environ, {}, clear=True):
+            source = EnvSettingsSource(EnumNestedSettings, env_parse_enums=True)
+            field = EnumNestedSettings.model_fields['sub']
+            env_vars = {'sub__color': 'YELLOW'}
+            result = source.explode_env_vars('sub', field, env_vars)
+            # YELLOW is not a member, so env_val stays as string
+            assert result['color'] == 'YELLOW'
+
+
+class TestExplodeEnvVarsDeeplyNestedDict:
+    """Tests for line 271: dict field with deeply nested keys where target_field is None."""
+
+    def test_explode_dict_deeply_nested_json_value(self):
+        """When a dict field has 2+ levels of nesting, target_field becomes None,
+        hitting the else branch (line 271) with is_complex=True."""
+
+        class DeepDictSettings(BaseSettings):
+            data: Dict[str, Any] = {}
+
+            model_config = {'env_nested_delimiter': '__'}
+
+        with patch.dict(os.environ, {}, clear=True):
+            source = EnvSettingsSource(DeepDictSettings)
+            field = DeepDictSettings.model_fields['data']
+            env_vars = {'data__key1__subkey': '{"nested": "value"}'}
+            result = source.explode_env_vars('data', field, env_vars)
+            assert result == {'key1': {'subkey': {'nested': 'value'}}}
+
+    def test_explode_dict_deeply_nested_non_json_value(self):
+        """When deeply nested dict value is not valid JSON, the ValueError is caught
+        because allow_json_failure=True (lines 276-278, not re-raised)."""
+
+        class DeepDictSettings(BaseSettings):
+            data: Dict[str, Any] = {}
+
+            model_config = {'env_nested_delimiter': '__'}
+
+        with patch.dict(os.environ, {}, clear=True):
+            source = EnvSettingsSource(DeepDictSettings)
+            field = DeepDictSettings.model_fields['data']
+            env_vars = {'data__key1__subkey': 'plain_string'}
+            result = source.explode_env_vars('data', field, env_vars)
+            # ValueError from json.loads is caught, original string preserved
+            assert result == {'key1': {'subkey': 'plain_string'}}
+
+    def test_explode_dict_deeply_nested_list_json(self):
+        """Deeply nested dict with a JSON list value."""
+
+        class DeepDictSettings(BaseSettings):
+            data: Dict[str, Any] = {}
+
+            model_config = {'env_nested_delimiter': '__'}
+
+        with patch.dict(os.environ, {}, clear=True):
+            source = EnvSettingsSource(DeepDictSettings)
+            field = DeepDictSettings.model_fields['data']
+            env_vars = {'data__section__items': '["a", "b", "c"]'}
+            result = source.explode_env_vars('data', field, env_vars)
+            assert result == {'section': {'items': ['a', 'b', 'c']}}
+
+
+class TestExplodeEnvVarsComplexFieldValueError:
+    """Tests for lines 273-278: complex value decoding with ValueError handling."""
+
+    def test_explode_nested_model_complex_field_invalid_json_raises(self):
+        """When a nested complex field (allow_json_failure=False) gets invalid JSON,
+        the ValueError is re-raised (line 278)."""
+
+        class InnerModel(BaseModel):
+            items: List[str] = []
+
+        class OuterSettings(BaseSettings):
+            inner: InnerModel = InnerModel()
+
+            model_config = {'env_nested_delimiter': '__'}
+
+        with patch.dict(os.environ, {}, clear=True):
+            source = EnvSettingsSource(OuterSettings)
+            field = OuterSettings.model_fields['inner']
+            env_vars = {'inner__items': 'not_valid_json'}
+            with pytest.raises(ValueError):
+                source.explode_env_vars('inner', field, env_vars)
+
+    def test_explode_nested_model_complex_field_valid_json(self):
+        """When a nested complex field gets valid JSON, it is decoded (lines 273-275)."""
+
+        class InnerModel(BaseModel):
+            items: List[str] = []
+
+        class OuterSettings(BaseSettings):
+            inner: InnerModel = InnerModel()
+
+            model_config = {'env_nested_delimiter': '__'}
+
+        with patch.dict(os.environ, {}, clear=True):
+            source = EnvSettingsSource(OuterSettings)
+            field = OuterSettings.model_fields['inner']
+            env_vars = {'inner__items': '["x", "y"]'}
+            result = source.explode_env_vars('inner', field, env_vars)
+            assert result == {'items': ['x', 'y']}
