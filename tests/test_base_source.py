@@ -737,3 +737,82 @@ class TestIntegration:
         source = InitSettingsSource(SimpleSettings, init_kwargs={})
         result = source()
         assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# Tests for PydanticBaseEnvSettingsSource.__call__ error paths and
+# env_parse_none_str dict handling
+# ---------------------------------------------------------------------------
+
+class TestBaseEnvSettingsSourceCallErrors:
+    def test_call_raises_settings_error_when_get_resolved_field_value_fails(self):
+        """Lines 545-546: exception in _get_resolved_field_value wraps in SettingsError."""
+
+        class FailingGetFieldSource(PydanticBaseEnvSettingsSource):
+            def get_field_value(self, field, field_name):
+                raise RuntimeError('boom')
+
+        source = FailingGetFieldSource(SimpleSettings)
+        with pytest.raises(SettingsError, match='error getting value for field "name"'):
+            source()
+
+    def test_call_raises_settings_error_preserves_cause(self):
+        """The original exception is chained via __cause__."""
+
+        class FailingGetFieldSource(PydanticBaseEnvSettingsSource):
+            def get_field_value(self, field, field_name):
+                raise RuntimeError('original cause')
+
+        source = FailingGetFieldSource(SimpleSettings)
+        with pytest.raises(SettingsError) as exc_info:
+            source()
+        assert isinstance(exc_info.value.__cause__, RuntimeError)
+        assert str(exc_info.value.__cause__) == 'original cause'
+
+    def test_call_raises_settings_error_when_prepare_field_value_raises_value_error(self):
+        """Lines 552-553: ValueError in prepare_field_value wraps in SettingsError."""
+
+        class FailingPrepareSource(PydanticBaseEnvSettingsSource):
+            def get_field_value(self, field, field_name):
+                return 'some_val', field_name, False
+
+            def prepare_field_value(self, field_name, field, value, value_is_complex):
+                if value is not None:
+                    raise ValueError('bad value')
+                return value
+
+        source = FailingPrepareSource(SimpleSettings)
+        with pytest.raises(SettingsError, match='error parsing value for field "name"'):
+            source()
+
+    def test_call_raises_settings_error_from_prepare_preserves_cause(self):
+        """The original ValueError is chained via __cause__."""
+
+        class FailingPrepareSource(PydanticBaseEnvSettingsSource):
+            def get_field_value(self, field, field_name):
+                return 'some_val', field_name, False
+
+            def prepare_field_value(self, field_name, field, value, value_is_complex):
+                if value is not None:
+                    raise ValueError('parse failure')
+                return value
+
+        source = FailingPrepareSource(SimpleSettings)
+        with pytest.raises(SettingsError) as exc_info:
+            source()
+        assert isinstance(exc_info.value.__cause__, ValueError)
+
+    def test_call_replaces_env_none_type_in_dict_values(self):
+        """Line 560: dict field_value with env_parse_none_str triggers _replace_env_none_type_values."""
+
+        class DictReturnSource(PydanticBaseEnvSettingsSource):
+            def get_field_value(self, field, field_name):
+                if field_name == 'name':
+                    return {'key': EnvNoneType('null'), 'other': 'keep'}, field_name, False
+                return None, field_name, False
+
+        source = DictReturnSource(SimpleSettings, env_parse_none_str='null')
+        result = source()
+        assert 'name' in result
+        assert result['name']['key'] is None
+        assert result['name']['other'] == 'keep'
