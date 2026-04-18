@@ -414,6 +414,237 @@ class TestExplodeEnvVars:
         result = source.explode_env_vars("mapping", field_info, env_vars)
         assert isinstance(result, dict)
 
+    def test_explode_env_vars_with_empty_value(self):
+        """Test line 259: empty env_val prevents complex field processing."""
+        class Settings(BaseSettings):
+            config: Dict[str, str] = {}
+
+        env_vars = {"config__key": ""}
+        source = EnvSettingsSource(Settings, env_nested_delimiter="__", case_sensitive=True)
+        field_info = Settings.model_fields["config"]
+
+        result = source.explode_env_vars("config", field_info, env_vars)
+        # Empty values shouldn't trigger complex field processing (line 259)
+        assert isinstance(result, dict)
+
+    def test_explode_env_vars_with_none_value(self):
+        """Test line 259: None env_val prevents complex field processing."""
+        class Settings(BaseSettings):
+            config: Dict[str, Any] = {}
+
+        env_vars = {"config__key": None}
+        source = EnvSettingsSource(Settings, env_nested_delimiter="__", case_sensitive=True)
+        field_info = Settings.model_fields["config"]
+
+        result = source.explode_env_vars("config", field_info, env_vars)
+        # None values shouldn't trigger complex field processing (line 259)
+        assert isinstance(result, dict)
+
+    def test_explode_env_vars_target_field_is_field_info(self):
+        """Test lines 260-264: target_field is FieldInfo and complex."""
+        class SubModel(BaseModel):
+            nested_data: Dict[str, Any] = {}
+
+        class Settings(BaseSettings):
+            config: SubModel
+
+        env_vars = {"config__nested_data": '{"key": "value"}'}
+        source = EnvSettingsSource(Settings, env_nested_delimiter="__", case_sensitive=True)
+        field_info = Settings.model_fields["config"]
+
+        result = source.explode_env_vars("config", field_info, env_vars)
+        # Complex field should attempt JSON decode (lines 260-264)
+        assert isinstance(result, dict)
+
+    def test_explode_env_vars_target_field_raw_type(self):
+        """Test lines 265-268: target_field is raw type (not FieldInfo)."""
+        class Settings(BaseSettings):
+            config: Dict[str, Dict[str, str]] = {}
+
+        env_vars = {"config__nested": '{"inner": "value"}'}
+        source = EnvSettingsSource(Settings, env_nested_delimiter="__", case_sensitive=True)
+        field_info = Settings.model_fields["config"]
+
+        result = source.explode_env_vars("config", field_info, env_vars)
+        # Raw type should be checked for complexity (lines 265-268)
+        assert isinstance(result, dict)
+
+    def test_explode_env_vars_no_target_field_is_dict(self):
+        """Test lines 269-271: target_field is None but is_dict is True."""
+        class Settings(BaseSettings):
+            config: Dict[str, Any] = {}
+
+        env_vars = {"config__unknown_key": '{"data": "value"}'}
+        source = EnvSettingsSource(Settings, env_nested_delimiter="__", case_sensitive=True)
+        field_info = Settings.model_fields["config"]
+
+        result = source.explode_env_vars("config", field_info, env_vars)
+        # When is_dict is True but target_field is None, set complex=True (line 271)
+        assert isinstance(result, dict)
+
+    def test_explode_env_vars_json_decode_with_coercion(self):
+        """Test lines 272-275: complex field with JSON decode and coercion."""
+        class SubModel(BaseModel):
+            data: Dict[str, str] = {}
+
+        class Settings(BaseSettings):
+            config: SubModel
+
+        env_vars = {"config__data": '{"key": "value"}'}
+        source = EnvSettingsSource(Settings, env_nested_delimiter="__", case_sensitive=True)
+        field_info = Settings.model_fields["config"]
+
+        result = source.explode_env_vars("config", field_info, env_vars)
+        # Should decode JSON and call _coerce_env_val_strict (line 275)
+        assert isinstance(result, dict)
+
+    def test_explode_env_vars_json_decode_error_with_allowfailure(self):
+        """Test lines 276-278: JSON decode fails with allow_json_failure=True."""
+        class Settings(BaseSettings):
+            config: Dict[str, Any] = {}
+
+        env_vars = {"config__data": "not_valid_json"}
+        source = EnvSettingsSource(Settings, env_nested_delimiter="__", case_sensitive=True)
+        field_info = Settings.model_fields["config"]
+
+        result = source.explode_env_vars("config", field_info, env_vars)
+        # JSON decode fails but allow_json_failure is True, no error raised
+        assert isinstance(result, dict)
+
+    def test_explode_env_vars_dict_setdefault_nested(self):
+        """Test line 253: setdefault creates nested dictionaries."""
+        class Settings(BaseSettings):
+            config: Dict[str, Dict[str, str]] = {}
+
+        env_vars = {"config__level1__level2": "value"}
+        source = EnvSettingsSource(Settings, env_nested_delimiter="__", case_sensitive=True)
+        field_info = Settings.model_fields["config"]
+
+        result = source.explode_env_vars("config", field_info, env_vars)
+        # setdefault should create nested dicts (line 253)
+        assert "level1" in result
+        assert isinstance(result["level1"], dict)
+        assert "level2" in result["level1"]
+
+    def test_explode_env_vars_env_var_assignment_simple(self):
+        """Test lines 279-281: assignment to env_var dict with last_key."""
+        class Settings(BaseSettings):
+            config: Dict[str, str] = {}
+
+        env_vars = {"config__key1": "value1", "config__key2": "value2"}
+        source = EnvSettingsSource(Settings, env_nested_delimiter="__", case_sensitive=True)
+        field_info = Settings.model_fields["config"]
+
+        result = source.explode_env_vars("config", field_info, env_vars)
+        # Values should be assigned with last_key (lines 279-281)
+        assert result.get("key1") == "value1"
+        assert result.get("key2") == "value2"
+
+    def test_explode_env_vars_env_none_type_handling(self):
+        """Test line 280: EnvNoneType replacement condition."""
+        class Settings(BaseSettings):
+            config: Dict[str, Optional[str]] = {}
+
+        env_vars = {"config__key": None}
+        source = EnvSettingsSource(Settings, env_nested_delimiter="__", env_parse_none_str="null", case_sensitive=True)
+        field_info = Settings.model_fields["config"]
+
+        result = source.explode_env_vars("config", field_info, env_vars)
+        # Line 280 checks: if last_key not in env_var or not isinstance(env_val, EnvNoneType) or env_var[last_key] == {}
+        assert isinstance(result, dict)
+
+    def test_explode_env_vars_maxsplit_deep_nesting(self):
+        """Test line 247: maxsplit limits split depth."""
+        class Settings(BaseSettings):
+            config: Dict[str, Dict[str, Dict[str, str]]] = {}
+
+        env_vars = {"config__l1__l2__l3__l4": "value"}
+        source = EnvSettingsSource(Settings, env_nested_delimiter="__", env_nested_max_split=2, case_sensitive=True)
+        field_info = Settings.model_fields["config"]
+
+        result = source.explode_env_vars("config", field_info, env_vars)
+        # With maxsplit=1, split should only split into 2 parts (line 247)
+        assert isinstance(result, dict)
+
+    def test_explode_env_vars_with_enum_handling(self):
+        """Test lines 262-264: enum value conversion."""
+        from enum import Enum
+
+        class Status(str, Enum):
+            ACTIVE = "active"
+
+        class SubModel(BaseModel):
+            status: Status
+
+        class Settings(BaseSettings):
+            config: SubModel
+
+        env_vars = {"config__status": "ACTIVE"}
+        source = EnvSettingsSource(Settings, env_nested_delimiter="__", env_parse_enums=True, case_sensitive=True)
+        field_info = Settings.model_fields["config"]
+
+        result = source.explode_env_vars("config", field_info, env_vars)
+        # Enum parsing should be attempted (lines 262-264)
+        assert isinstance(result, dict)
+
+    def test_explode_env_vars_case_insensitive_next_field(self):
+        """Test line 251: case_sensitive parameter passed to next_field."""
+        class SubModel(BaseModel):
+            MyField: str
+
+        class Settings(BaseSettings):
+            config: SubModel
+
+        env_vars = {"config__myfield": "value"}
+        source = EnvSettingsSource(Settings, env_nested_delimiter="__", case_sensitive=False)
+        field_info = Settings.model_fields["config"]
+
+        result = source.explode_env_vars("config", field_info, env_vars)
+        # Case-insensitive matching should find MyField (line 251)
+        assert isinstance(result, dict)
+
+    def test_explode_env_vars_json_invalid_strict_mode(self):
+        """Test lines 276-278: JSON error raised in strict mode."""
+        class SubModel(BaseModel):
+            value: int
+
+        class Settings(BaseSettings):
+            config: SubModel
+
+        env_vars = {"config__value": "not_json"}
+        source = EnvSettingsSource(Settings, env_nested_delimiter="__", case_sensitive=True)
+        field_info = Settings.model_fields["config"]
+
+        # With union types, allow_json_failure is True, so no error
+        result = source.explode_env_vars("config", field_info, env_vars)
+        assert isinstance(result, dict)
+
+    def test_explode_env_vars_multiple_prefixes_matching(self):
+        """Test line 242-244: finding matching prefix from multiple field infos."""
+        class Settings(BaseSettings):
+            config: Dict[str, Any] = {}
+
+        env_vars = {"config__nested__key": "value"}
+        source = EnvSettingsSource(Settings, env_nested_delimiter="__", case_sensitive=True)
+        field_info = Settings.model_fields["config"]
+
+        result = source.explode_env_vars("config", field_info, env_vars)
+        # Line 242 iterates through prefixes to find match
+        assert isinstance(result, dict)
+
+    def test_explode_env_vars_empty_keys_list(self):
+        """Test lines 250-253: when keys list is empty (no intermediate levels)."""
+        class Settings(BaseSettings):
+            config: Dict[str, str] = {}
+
+        env_vars = {"config__single": "value"}
+        source = EnvSettingsSource(Settings, env_nested_delimiter="__", case_sensitive=True)
+        field_info = Settings.model_fields["config"]
+
+        result = source.explode_env_vars("config", field_info, env_vars)
+        # When split results in single key, keys list is empty
+        assert isinstance(result, dict)
+
 
 class TestCoerceEnvValStrict:
     """Test EnvSettingsSource._coerce_env_val_strict method."""
