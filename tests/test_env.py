@@ -763,6 +763,43 @@ def test_coerce_env_val_strict_json_decode_error():
     assert result == "not-json-at-all"
 
 
+def test_coerce_env_val_strict_json_decode_error_strict_mode():
+    """Test _coerce_env_val_strict raises when JSON decode fails in strict mode."""
+    class Settings(BaseSettings):
+        count: StrictInt = 0
+
+        model_config = {"strict": True}
+
+    source = EnvSettingsSource(Settings)
+    field = Settings.model_fields["count"]
+
+    # Invalid JSON that can't be decoded - should raise since strict=True
+    # This triggers the json.loads to fail and re-raise (lines 312-313)
+    with pytest.raises(json.JSONDecodeError):
+        source._coerce_env_val_strict(field, "{invalid-json}")
+
+
+def test_coerce_env_val_strict_json_decoded_string_strict_mode():
+    """Test _coerce_env_val_strict when JSON decodes to string in strict mode."""
+    class Settings(BaseSettings):
+        count: StrictInt = 0
+
+        model_config = {"strict": True}
+
+    source = EnvSettingsSource(Settings)
+    field = Settings.model_fields["count"]
+
+    # Valid JSON that decodes to a string, but field expects StrictInt
+    # This triggers json.loads to succeed but decoded value is string (line 314)
+    # Since decoded is a string, the ValidationError from line 308 is re-raised (line 316)
+    # But it's caught by the outer except ValidationError (line 317) and passed
+    # So the function returns the original value
+    result = source._coerce_env_val_strict(field, '"not_a_number"')
+
+    # Should return original value since validation failed
+    assert result == '"not_a_number"'
+
+
 def test_repr():
     """Test __repr__ method."""
     class Settings(BaseSettings):
