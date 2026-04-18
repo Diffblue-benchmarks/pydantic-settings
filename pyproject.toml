@@ -89,6 +89,7 @@ filterwarnings = [
     'error',
     'ignore:This is a placeholder until pydantic-settings.*:UserWarning',
     'ignore::DeprecationWarning:botocore.*:',
+    'ignore::coverage.exceptions.CoverageWarning',
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
