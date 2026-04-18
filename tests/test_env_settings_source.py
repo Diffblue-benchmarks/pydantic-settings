@@ -431,6 +431,149 @@ class TestEnvSettingsSourceExplodeEnvVars:
             result = source.explode_env_vars('sub', field, source.env_vars)
             assert result == {'val': 'prefixed'}
 
+    def test_explode_env_vars_skips_non_matching_env_vars(self):
+        """Test explode_env_vars skips env vars that don't match the field prefix (lines 243-244)."""
+
+        class Settings(BaseSettings):
+            sub: SubModel = Field(default_factory=SubModel)
+            other: str = 'default'
+            model_config = {'env_nested_delimiter': '__'}
+
+        # OTHER__KEY doesn't match the 'sub__' prefix, so it should be skipped
+        with patch.dict(os.environ, {'SUB__VAL': 'nested', 'OTHER__KEY': 'ignored', 'UNRELATED': 'value'}, clear=True):
+            source = EnvSettingsSource(Settings)
+            field = Settings.model_fields['sub']
+            result = source.explode_env_vars('sub', field, source.env_vars)
+            # Only SUB__VAL should be processed, OTHER__KEY should hit StopIteration and continue
+            assert result == {'val': 'nested'}
+            assert 'other' not in result
+            assert 'key' not in result
+
+    def test_explode_env_vars_with_env_parse_enums_nested(self):
+        """Test explode_env_vars with env_parse_enums for nested enum fields (lines 263-264)."""
+
+        class SubWithEnum(BaseModel):
+            color: Color = Color.RED
+
+        class Settings(BaseSettings):
+            sub: SubWithEnum = Field(default_factory=SubWithEnum)
+            model_config = {'env_nested_delimiter': '__', 'env_parse_enums': True}
+
+        # Use enum name 'GREEN' which should be converted to Color.GREEN
+        with patch.dict(os.environ, {'SUB__COLOR': 'GREEN'}, clear=True):
+            source = EnvSettingsSource(Settings)
+            field = Settings.model_fields['sub']
+            result = source.explode_env_vars('sub', field, source.env_vars)
+            assert result == {'color': Color.GREEN}
+
+    def test_explode_env_vars_with_env_parse_enums_int_enum(self):
+        """Test explode_env_vars with env_parse_enums for IntEnum (lines 263-264)."""
+
+        class SubWithIntEnum(BaseModel):
+            priority: Priority = Priority.LOW
+
+        class Settings(BaseSettings):
+            sub: SubWithIntEnum = Field(default_factory=SubWithIntEnum)
+            model_config = {'env_nested_delimiter': '__', 'env_parse_enums': True}
+
+        with patch.dict(os.environ, {'SUB__PRIORITY': 'HIGH'}, clear=True):
+            source = EnvSettingsSource(Settings)
+            field = Settings.model_fields['sub']
+            result = source.explode_env_vars('sub', field, source.env_vars)
+            assert result == {'priority': Priority.HIGH}
+
+    def test_explode_env_vars_nested_dict_is_complex(self):
+        """Test explode_env_vars when nested field type is dict but target_field is None (line 271).
+
+        Line 271 is reached when:
+        - is_dict is True (field annotation is a dict type)
+        - target_field is None (next_field couldn't find a matching field during traversal)
+        This sets is_complex=True and allow_json_failure=True.
+        """
+
+        class Settings(BaseSettings):
+            # Dict field - is_dict will be True
+            data: Dict[str, str] = Field(default_factory=dict)
+            model_config = {'env_nested_delimiter': '__'}
+
+        # We need multiple keys so that during traversal, target_field becomes None
+        # With DATA__NESTED__KEY: after first iteration, target_field = str (value type of dict)
+        # Then next_field(str, 'key') returns None since str is not a model/dict
+        # At line 256, target_field = None, but is_dict = True, so line 271 is triggered
+        with patch.dict(os.environ, {'DATA__NESTED__KEY': '{"inner": "value"}'}, clear=True):
+            source = EnvSettingsSource(Settings)
+            field = Settings.model_fields['data']
+            result = source.explode_env_vars('data', field, source.env_vars)
+            # is_dict=True, target_field=None -> line 271: is_complex=True, allow_json_failure=True
+            # JSON value should be decoded
+            assert result == {'nested': {'key': {'inner': 'value'}}}
+
+    def test_explode_env_vars_dict_field_with_json_value(self):
+        """Test explode_env_vars with dict field containing JSON value (lines 273-275)."""
+
+        class Inner(BaseModel):
+            value: str = 'default'
+
+        class Settings(BaseSettings):
+            data: Dict[str, Inner] = Field(default_factory=dict)
+            model_config = {'env_nested_delimiter': '__'}
+
+        # Dict with complex values - when target_field is the dict value type (Inner model),
+        # it triggers the complex decoding path via target_field as FieldInfo (line 260-261)
+        with patch.dict(os.environ, {'DATA__KEY': '{"value": "from_json"}'}, clear=True):
+            source = EnvSettingsSource(Settings)
+            field = Settings.model_fields['data']
+            result = source.explode_env_vars('data', field, source.env_vars)
+            assert result == {'key': {'value': 'from_json'}}
+
+    def test_explode_env_vars_dict_field_invalid_json_allowed_failure(self):
+        """Test explode_env_vars with invalid JSON in dict field allows failure (lines 276-278)."""
+
+        class Settings(BaseSettings):
+            data: Dict[str, Any] = Field(default_factory=dict)
+            model_config = {'env_nested_delimiter': '__'}
+
+        # Invalid JSON should be allowed when target_field is None (dict value) since allow_json_failure=True
+        with patch.dict(os.environ, {'DATA__KEY': 'not_valid_json'}, clear=True):
+            source = EnvSettingsSource(Settings)
+            field = Settings.model_fields['data']
+            # Should not raise, allow_json_failure is True for dict fields
+            result = source.explode_env_vars('data', field, source.env_vars)
+            # The value should be coerced as-is since JSON decoding fails
+            assert 'key' in result
+
+    def test_explode_env_vars_complex_nested_model_json_decode(self):
+        """Test explode_env_vars decodes complex nested model values (lines 273-275)."""
+
+        class Inner(BaseModel):
+            value: str = 'default'
+
+        class Outer(BaseModel):
+            inner: Inner = Field(default_factory=Inner)
+
+        class Settings(BaseSettings):
+            outer: Outer = Field(default_factory=Outer)
+            model_config = {'env_nested_delimiter': '__'}
+
+        with patch.dict(os.environ, {'OUTER__INNER': '{"value": "from_json"}'}, clear=True):
+            source = EnvSettingsSource(Settings)
+            field = Settings.model_fields['outer']
+            result = source.explode_env_vars('outer', field, source.env_vars)
+            assert result == {'inner': {'value': 'from_json'}}
+
+    def test_explode_env_vars_deeply_nested_dict_complex(self):
+        """Test explode_env_vars with deeply nested dict that requires complex decoding (lines 271, 273-275)."""
+
+        class Settings(BaseSettings):
+            data: Dict[str, Dict[str, List[int]]] = Field(default_factory=dict)
+            model_config = {'env_nested_delimiter': '__'}
+
+        with patch.dict(os.environ, {'DATA__OUTER__INNER': '[1, 2, 3]'}, clear=True):
+            source = EnvSettingsSource(Settings)
+            field = Settings.model_fields['data']
+            result = source.explode_env_vars('data', field, source.env_vars)
+            assert result == {'outer': {'inner': [1, 2, 3]}}
+
 
 class TestEnvSettingsSourceCoerceEnvValStrict:
     """Tests for EnvSettingsSource._coerce_env_val_strict"""
