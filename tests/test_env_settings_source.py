@@ -85,6 +85,10 @@ class AnyDictSettings(BaseSettings):
     model_config = {'env_nested_delimiter': '__'}
 
 
+class EnumDirectSettings(BaseSettings):
+    color: MyColor = MyColor.RED
+
+
 class InnerComplexModel(BaseModel):
     items: List[str] = []
 
@@ -271,6 +275,30 @@ class TestPrepareFieldValue:
         result = src.prepare_field_value('data', field, '{"key2": "v2"}', False)
         assert result.get('key2') == 'v2'
         assert result.get('key1') == 'v1'
+
+    def test_env_parse_enums_converts_matching_enum_name(self):
+        src = EnvSettingsSource(EnumDirectSettings, env_parse_enums=True)
+        field = EnumDirectSettings.model_fields['color']
+        result = src.prepare_field_value('color', field, 'BLUE', False)
+        assert result == MyColor.BLUE
+
+    def test_env_parse_enums_leaves_non_matching_name_unchanged(self):
+        src = EnvSettingsSource(EnumDirectSettings, env_parse_enums=True)
+        field = EnumDirectSettings.model_fields['color']
+        result = src.prepare_field_value('color', field, 'UNKNOWN', False)
+        assert result == 'UNKNOWN'
+
+    def test_complex_field_invalid_json_raises_value_error(self):
+        src = EnvSettingsSource(NestedSettings)
+        field = NestedSettings.model_fields['nested']
+        with pytest.raises(ValueError):
+            src.prepare_field_value('nested', field, 'not-valid-json', False)
+
+    def test_complex_field_decoded_list_returned_directly(self):
+        src = EnvSettingsSource(ListSettings)
+        field = ListSettings.model_fields['items']
+        result = src.prepare_field_value('items', field, '["a", "b"]', False)
+        assert result == ['a', 'b']
 
 
 # ---------------------------------------------------------------------------
