@@ -229,6 +229,55 @@ class TestPrepareFieldValue:
         result = source.prepare_field_value("field1", field_info, env_none, True)
         assert isinstance(result, EnvNoneType)
 
+    def test_prepare_field_value_complex_none_with_explode_env_vars(self):
+        """Test prepare_field_value complex field with None value triggers explode_env_vars - line 127."""
+        class SubModel(BaseModel):
+            key1: str
+
+        class Settings(BaseSettings):
+            model_config = {"env_nested_delimiter": "__"}
+            sub: SubModel
+
+        with patch.dict(os.environ, {"sub__key1": "value1"}):
+            source = EnvSettingsSource(Settings, env_nested_delimiter="__")
+            field_info = Settings.model_fields["sub"]
+
+            # When value is None and field is complex, explode_env_vars is called
+            result = source.prepare_field_value("sub", field_info, None, False)
+            # Should return dict from explode_env_vars
+            assert isinstance(result, dict)
+            assert result.get("key1") == "value1"
+
+    def test_prepare_field_value_complex_decode_error_allowed(self):
+        """Test prepare_field_value complex field with JSON decode error when allowed - lines 132-134."""
+        from typing import Union
+
+        class Settings(BaseSettings):
+            data: Union[Dict[str, Any], str]
+
+        source = EnvSettingsSource(Settings)
+        field_info = Settings.model_fields["data"]
+
+        # Invalid JSON but allow_parse_failure is True for union types
+        result = source.prepare_field_value("data", field_info, "invalid json", False)
+        # Should return the original value when decode fails but is allowed
+        assert result == "invalid json"
+
+    def test_prepare_field_value_complex_value_not_dict(self):
+        """Test prepare_field_value complex field where decoded value is not dict - line 139."""
+        class Settings(BaseSettings):
+            model_config = {"json_encoders": {str: str}}
+            data: list
+
+        source = EnvSettingsSource(Settings)
+        field_info = Settings.model_fields["data"]
+
+        # Pass a JSON array/list
+        result = source.prepare_field_value("data", field_info, '["item1", "item2"]', True)
+        # When value is decoded and is not a dict, return the value as-is
+        assert isinstance(result, list)
+        assert result == ["item1", "item2"]
+
 
 class TestFieldIsComplex:
     """Test EnvSettingsSource._field_is_complex method."""
