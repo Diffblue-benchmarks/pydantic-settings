@@ -366,6 +366,31 @@ def test_union_is_complex_optional_list():
     assert _union_is_complex(Optional[List[int]], []) is True
 
 
+def test_union_is_complex_annotated_union_with_json_suppresses():
+    # Annotated[Union[int, List[str]], Json()] - Json in inner_meta triggers `continue` (lines 146-148)
+    # so the nested complex Union is skipped; no other complex args -> False
+    json_instance = Json()
+    inner = Annotated[Union[int, List[str]], json_instance]
+    annotation = Union[inner, str]
+    assert _union_is_complex(annotation, []) is False
+
+
+def test_union_is_complex_annotated_union_non_json_complex():
+    # Annotated[Union[int, List[str]], Strict()] - non-Json metadata, recurse into inner Union (lines 146-147, 149-151)
+    # inner Union contains List[str] which is complex -> True
+    inner = Annotated[Union[int, List[str]], Strict()]
+    annotation = Union[inner, bool]
+    assert _union_is_complex(annotation, []) is True
+
+
+def test_union_is_complex_annotated_union_non_json_not_complex():
+    # Annotated[Union[int, str], Strict()] - non-Json metadata, recurse into inner Union (lines 146-147, 149-150)
+    # inner Union contains only simple types -> False
+    inner = Annotated[Union[int, str], Strict()]
+    annotation = Union[inner, bool]
+    assert _union_is_complex(annotation, []) is False
+
+
 # ============================================================
 # Tests for _union_has_strict_types
 # ============================================================
