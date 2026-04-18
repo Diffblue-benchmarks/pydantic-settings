@@ -69,6 +69,48 @@ class TestImportToml:
         finally:
             toml_module.tomli = original_tomli
 
+    def test_import_toml_early_return_when_tomli_already_loaded(self) -> None:
+        """Test early return path when tomli is already loaded on Python < 3.11."""
+        from pydantic_settings.sources.providers import toml as toml_module
+
+        original_tomli = toml_module.tomli
+        try:
+            # Simulate tomli already being loaded
+            import tomli as real_tomli
+
+            toml_module.tomli = real_tomli
+
+            # Mock version_info to simulate Python < 3.11
+            fake_version = (3, 10, 0)
+            with patch.object(sys, 'version_info', fake_version):
+                # This should hit the early return on line 32-33
+                import_toml()
+
+            # tomli should still be the same value (unchanged by the function)
+            assert toml_module.tomli is real_tomli
+        finally:
+            toml_module.tomli = original_tomli
+
+    def test_import_toml_imports_tomli_when_not_loaded(self) -> None:
+        """Test that tomli is imported when not loaded on simulated Python < 3.11."""
+        from pydantic_settings.sources.providers import toml as toml_module
+
+        original_tomli = toml_module.tomli
+        try:
+            # Set tomli to None to simulate it not being loaded
+            toml_module.tomli = None
+
+            # Mock version_info to simulate Python < 3.11
+            fake_version = (3, 10, 0)
+            with patch.object(sys, 'version_info', fake_version):
+                # This should hit lines 34-35, importing tomli
+                import_toml()
+
+            # tomli should now be loaded
+            assert toml_module.tomli is not None
+        finally:
+            toml_module.tomli = original_tomli
+
 
 class TestTomlConfigSettingsSourceInit:
     """Tests for TomlConfigSettingsSource.__init__ method."""
