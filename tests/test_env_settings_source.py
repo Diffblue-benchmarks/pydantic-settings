@@ -1,5 +1,6 @@
 """Tests for EnvSettingsSource."""
 
+import json
 import os
 from typing import Any, Dict, List, Optional, Union
 from unittest.mock import patch
@@ -396,6 +397,20 @@ class TestCoerceEnvValStrict:
             field = StrictSettings.model_fields['flag']
             result = source._coerce_env_val_strict(field, 'null')
             assert result == 'null'
+
+    def test_coerce_strict_invalid_json_raises(self):
+        with patch.dict(os.environ, {}, clear=True):
+            source = EnvSettingsSource(StrictSettings)
+            field = StrictSettings.model_fields['flag']
+            with pytest.raises(json.JSONDecodeError):
+                source._coerce_env_val_strict(field, 'not_valid_json')
+
+    def test_coerce_strict_json_string_returns_original(self):
+        with patch.dict(os.environ, {}, clear=True):
+            source = EnvSettingsSource(StrictSettings)
+            field = StrictSettings.model_fields['flag']
+            result = source._coerce_env_val_strict(field, '"hello"')
+            assert result == '"hello"'
 
 
 class TestRepr:
