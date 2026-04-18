@@ -341,6 +341,24 @@ def test_union_is_complex_optional_model():
     assert _union_is_complex(Optional[MyModel], []) is True
 
 
+def test_union_is_complex_annotated_union_with_json_skips():
+    """An Annotated[Union[...], Json()] arg should be skipped (not flagged as complex)."""
+    annotation = Union[str, Annotated[Union[str, MyModel], Json()]]
+    assert _union_is_complex(annotation, []) is False
+
+
+def test_union_is_complex_annotated_nested_union_recurses():
+    """An Annotated[Union[...], non-Json] arg should recurse into the inner Union."""
+    annotation = Union[str, Annotated[Union[str, MyModel], 'some_meta']]
+    assert _union_is_complex(annotation, []) is True
+
+
+def test_union_is_complex_annotated_nested_union_simple_types():
+    """An Annotated[Union[simple, simple], non-Json] should return False when inner union is not complex."""
+    annotation = Union[str, Annotated[Union[str, int], 'some_meta']]
+    assert _union_is_complex(annotation, []) is False
+
+
 # --- Tests for _union_has_strict_types ---
 
 
