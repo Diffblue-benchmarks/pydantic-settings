@@ -570,6 +570,37 @@ class TestCliAppRunCliCmd:
         assert called == [True]
         assert result is model
 
+    def test_async_method_with_running_event_loop(self):
+        called = []
+
+        class MyModel(BaseModel):
+            name: str = 'test'
+
+            async def cli_cmd(self):
+                called.append(True)
+
+        async def run_in_loop():
+            model = MyModel()
+            return CliApp._run_cli_cmd(model, 'cli_cmd', is_required=True)
+
+        result = asyncio.run(run_in_loop())
+        assert called == [True]
+        assert result is not None
+
+    def test_async_exception_propagated_with_running_event_loop(self):
+        class MyModel(BaseModel):
+            name: str = 'test'
+
+            async def cli_cmd(self):
+                raise ValueError('async error in thread')
+
+        async def run_in_loop():
+            model = MyModel()
+            return CliApp._run_cli_cmd(model, 'cli_cmd', is_required=True)
+
+        with pytest.raises(ValueError, match='async error in thread'):
+            asyncio.run(run_in_loop())
+
 
 # ---------------------------------------------------------------------------
 # CliApp.run tests
