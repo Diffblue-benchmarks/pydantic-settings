@@ -812,3 +812,46 @@ def test_pydantic_base_env_settings_source_call_with_dict_value_case_insensitive
     # case-insensitive mode should normalize keys in the dict value
     assert 'sub' in result
     assert 'MyKey' in result['sub']
+
+
+def test_call_raises_settings_error_when_get_field_value_raises():
+    """Covers lines 545-546: exception from _get_resolved_field_value is wrapped in SettingsError."""
+
+    class ErrorEnvSource(PydanticBaseEnvSettingsSource):
+        def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[Any, str, bool]:
+            raise RuntimeError('unexpected error from source')
+
+    source = ErrorEnvSource(SimpleSettings)
+    with pytest.raises(SettingsError, match='error getting value for field'):
+        source()
+
+
+def test_call_raises_settings_error_when_prepare_field_value_raises_value_error():
+    """Covers lines 552-553: ValueError from prepare_field_value is wrapped in SettingsError."""
+
+    class ValueErrorEnvSource(PydanticBaseEnvSettingsSource):
+        def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[Any, str, bool]:
+            return 'some_value', field_name, False
+
+        def prepare_field_value(self, field_name: str, field: FieldInfo, value: Any, value_is_complex: bool) -> Any:
+            raise ValueError('invalid value for field')
+
+    source = ValueErrorEnvSource(SimpleSettings)
+    with pytest.raises(SettingsError, match='error parsing value for field'):
+        source()
+
+
+def test_call_with_dict_value_and_env_parse_none_str_replaces_env_none_type_in_dict():
+    """Covers line 560: field_value is a dict and env_parse_none_str is set, so _replace_env_none_type_values is called."""
+
+    class DictNoneStrEnvSource(PydanticBaseEnvSettingsSource):
+        def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[Any, str, bool]:
+            if field_name == 'name':
+                return {'key': EnvNoneType('null'), 'other': 'value'}, field_name, False
+            return None, field_name, False
+
+    source = DictNoneStrEnvSource(SimpleSettings, env_parse_none_str='null')
+    result = source()
+    assert 'name' in result
+    assert result['name']['key'] is None
+    assert result['name']['other'] == 'value'
