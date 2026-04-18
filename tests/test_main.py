@@ -857,6 +857,100 @@ class TestCliAppRunSubcommand:
         with pytest.raises((SettingsError, SystemExit)):
             CliApp.run_subcommand(model, cli_exit_on_error=False)
 
+    def test_run_subcommand_success_runs_subcommand_cli_cmd(self):
+        from pydantic_settings import CliPositionalArg, CliSubCommand
+
+        class Clone(BaseModel):
+            repository: CliPositionalArg[str]
+            directory: CliPositionalArg[str]
+
+            def cli_cmd(self) -> None:
+                self.directory = 'ran the git clone cli cmd'
+
+        class Init(BaseModel):
+            directory: CliPositionalArg[str]
+
+            def cli_cmd(self) -> None:
+                self.directory = 'ran the git init cli cmd'
+
+        class Git(BaseModel):
+            clone: CliSubCommand[Clone]
+            init: CliSubCommand[Init]
+
+            def cli_cmd(self) -> None:
+                CliApp.run_subcommand(self)
+
+        cmd = CliApp.run(Git, cli_args=['init', 'dir'])
+        assert cmd.model_dump() == {
+            'clone': None,
+            'init': {'directory': 'ran the git init cli cmd'},
+        }
+
+    def test_run_subcommand_success_with_clone_subcommand(self):
+        from pydantic_settings import CliPositionalArg, CliSubCommand
+
+        class Clone(BaseModel):
+            repository: CliPositionalArg[str]
+
+            def cli_cmd(self) -> None:
+                self.repository = 'ran the git clone cli cmd'
+
+        class Init(BaseModel):
+            directory: CliPositionalArg[str]
+
+            def cli_cmd(self) -> None:
+                self.directory = 'ran the git init cli cmd'
+
+        class Git(BaseModel):
+            clone: CliSubCommand[Clone]
+            init: CliSubCommand[Init]
+
+            def cli_cmd(self) -> None:
+                CliApp.run_subcommand(self)
+
+        cmd = CliApp.run(Git, cli_args=['clone', 'my-repo'])
+        assert cmd.model_dump() == {
+            'clone': {'repository': 'ran the git clone cli cmd'},
+            'init': None,
+        }
+
+    def test_run_subcommand_cleans_up_stack_on_success(self):
+        from pydantic_settings import CliPositionalArg, CliSubCommand
+
+        class Sub(BaseModel):
+            val: CliPositionalArg[str]
+
+            def cli_cmd(self) -> None:
+                pass
+
+        class Main(BaseModel):
+            sub: CliSubCommand[Sub]
+
+            def cli_cmd(self) -> None:
+                CliApp.run_subcommand(self)
+
+        before_count = len(CliApp._subcommand_stack)
+        CliApp.run(Main, cli_args=['sub', 'x'])
+        assert len(CliApp._subcommand_stack) == before_count
+
+    def test_run_subcommand_raises_err_directly_when_format_help_is_none(self):
+        from pydantic_settings.sources import CliSettingsSource
+
+        class MyModel(BaseModel):
+            name: str = 'default'
+
+        model = MyModel()
+        settings_cls = CliApp._get_base_settings_cls(type(model))
+        source = CliSettingsSource(settings_cls, cli_parse_args=[])
+        source._format_help = None  # Force the else branch at line 791
+
+        CliApp._subcommand_stack[id(model)] = (source, source.root_parser, ':subcommand')
+        try:
+            with pytest.raises(SettingsError):
+                CliApp.run_subcommand(model, cli_exit_on_error=False)
+        finally:
+            CliApp._subcommand_stack.pop(id(model), None)
+
 
 # ---------------------------------------------------------------------------
 # Integration tests
