@@ -623,3 +623,316 @@ class TestGoogleSecretManagerIntegration:
 
         # Verify the env_vars mapping works
         assert isinstance(source.env_vars, GoogleSecretManagerMapping)
+
+
+class TestGetFieldValueSecretVersionBranches:
+    """Tests for get_field_value method covering SecretVersion-specific branches.
+
+    These tests target uncovered lines 206-222 in gcp.py:get_field_value
+    """
+
+    def test_get_field_value_with_secret_version_case_sensitive_found(self) -> None:
+        """Test get_field_value with SecretVersion where secret is found case-sensitively.
+
+        Covers lines 206-207, 211-213, 218: Iterating through field info, finding secret
+        by case-sensitive lookup, fetching versioned secret, and returning the value.
+        """
+        mock_client = MagicMock()
+        mock_credentials = MagicMock()
+        mock_secret = MagicMock()
+        mock_secret.name = 'projects/test-project/secrets/api_key'
+        mock_client.list_secrets.return_value = [mock_secret]
+        mock_client.common_project_path.return_value = 'projects/test-project'
+        mock_client.parse_secret_path.return_value = {'secret': 'api_key'}
+        mock_response = MagicMock()
+        mock_response.payload.data.decode.return_value = 'versioned_value_v3'
+        mock_client.access_secret_version.return_value = mock_response
+        mock_client.secret_version_path.return_value = 'path'
+
+        class TestSettings(BaseSettings):
+            api_key: str = ''
+
+            model_config = {'case_sensitive': True}  # type: ignore[assignment]
+
+        with patch('pydantic_settings.sources.providers.gcp.import_gcp_secret_manager'):
+            source = GoogleSecretManagerSettingsSource(
+                TestSettings,
+                credentials=mock_credentials,
+                project_id='test-project',
+                secret_client=mock_client,
+                case_sensitive=True,
+            )
+
+        field_info = FieldInfo(annotation=str, default='', metadata=[SecretVersion('v3')])
+        value, key, is_complex = source.get_field_value(field_info, 'api_key')
+
+        assert value == 'versioned_value_v3'
+
+    def test_get_field_value_with_secret_version_case_insensitive_lookup(self) -> None:
+        """Test get_field_value with SecretVersion uses case-insensitive lookup when needed.
+
+        Covers lines 208-209: When gcp_secret_name is None on first lookup, tries
+        case-insensitive lookup with env_name.lower().
+        """
+        mock_client = MagicMock()
+        mock_credentials = MagicMock()
+        mock_secret = MagicMock()
+        mock_secret.name = 'projects/test-project/secrets/API_KEY'
+        mock_client.list_secrets.return_value = [mock_secret]
+        mock_client.common_project_path.return_value = 'projects/test-project'
+        mock_client.parse_secret_path.return_value = {'secret': 'API_KEY'}
+        mock_response = MagicMock()
+        mock_response.payload.data.decode.return_value = 'versioned_value_case_insensitive'
+        mock_client.access_secret_version.return_value = mock_response
+        mock_client.secret_version_path.return_value = 'path'
+
+        class TestSettings(BaseSettings):
+            api_key: str = ''
+
+            model_config = {'case_sensitive': False}  # type: ignore[assignment]
+
+        with patch('pydantic_settings.sources.providers.gcp.import_gcp_secret_manager'):
+            source = GoogleSecretManagerSettingsSource(
+                TestSettings,
+                credentials=mock_credentials,
+                project_id='test-project',
+                secret_client=mock_client,
+                case_sensitive=False,
+            )
+
+        # Use lowercase field name when secrets are uppercase - tests case-insensitive path
+        field_info = FieldInfo(annotation=str, default='', metadata=[SecretVersion('v5')])
+        value, key, is_complex = source.get_field_value(field_info, 'api_key')
+
+        assert value == 'versioned_value_case_insensitive'
+
+    def test_get_field_value_with_secret_version_populate_by_name_returns_field_name(self) -> None:
+        """Test get_field_value with SecretVersion and populate_by_name returns field_name as key.
+
+        Covers lines 216-217: When populate_by_name is True and env_val is not None,
+        returns field_name instead of field_key.
+        """
+        mock_client = MagicMock()
+        mock_credentials = MagicMock()
+        mock_secret = MagicMock()
+        mock_secret.name = 'projects/test-project/secrets/my_alias'
+        mock_client.list_secrets.return_value = [mock_secret]
+        mock_client.common_project_path.return_value = 'projects/test-project'
+        mock_client.parse_secret_path.return_value = {'secret': 'my_alias'}
+        mock_response = MagicMock()
+        mock_response.payload.data.decode.return_value = 'aliased_versioned_value'
+        mock_client.access_secret_version.return_value = mock_response
+        mock_client.secret_version_path.return_value = 'path'
+
+        class TestSettings(BaseSettings):
+            my_field: str = Field(default='', validation_alias='my_alias')
+
+            model_config = {'case_sensitive': True, 'populate_by_name': True}  # type: ignore[assignment]
+
+        with patch('pydantic_settings.sources.providers.gcp.import_gcp_secret_manager'):
+            source = GoogleSecretManagerSettingsSource(
+                TestSettings,
+                credentials=mock_credentials,
+                project_id='test-project',
+                secret_client=mock_client,
+                case_sensitive=True,
+            )
+
+        field_info = FieldInfo(annotation=str, default='', validation_alias='my_alias', metadata=[SecretVersion('v2')])
+        value, key, is_complex = source.get_field_value(field_info, 'my_field')
+
+        assert value == 'aliased_versioned_value'
+        # When populate_by_name is True, should return field_name, not field_key (alias)
+        assert key == 'my_field'
+
+    def test_get_field_value_with_secret_version_no_populate_by_name_returns_field_key(self) -> None:
+        """Test get_field_value with SecretVersion without populate_by_name returns field_key.
+
+        Covers line 218: When populate_by_name is False, returns field_key instead of field_name.
+        """
+        mock_client = MagicMock()
+        mock_credentials = MagicMock()
+        mock_secret = MagicMock()
+        mock_secret.name = 'projects/test-project/secrets/my_alias'
+        mock_client.list_secrets.return_value = [mock_secret]
+        mock_client.common_project_path.return_value = 'projects/test-project'
+        mock_client.parse_secret_path.return_value = {'secret': 'my_alias'}
+        mock_response = MagicMock()
+        mock_response.payload.data.decode.return_value = 'aliased_versioned_value'
+        mock_client.access_secret_version.return_value = mock_response
+        mock_client.secret_version_path.return_value = 'path'
+
+        class TestSettings(BaseSettings):
+            my_field: str = Field(default='', validation_alias='my_alias')
+
+            model_config = {'case_sensitive': True, 'populate_by_name': False}  # type: ignore[assignment]
+
+        with patch('pydantic_settings.sources.providers.gcp.import_gcp_secret_manager'):
+            source = GoogleSecretManagerSettingsSource(
+                TestSettings,
+                credentials=mock_credentials,
+                project_id='test-project',
+                secret_client=mock_client,
+                case_sensitive=True,
+            )
+
+        field_info = FieldInfo(annotation=str, default='', validation_alias='my_alias', metadata=[SecretVersion('v2')])
+        value, key, is_complex = source.get_field_value(field_info, 'my_field')
+
+        assert value == 'aliased_versioned_value'
+        # When populate_by_name is False, should return field_key (the alias)
+        assert key == 'my_alias'
+
+    def test_get_field_value_with_secret_version_secret_not_in_mapping(self) -> None:
+        """Test get_field_value with SecretVersion when secret name is not in mapping.
+
+        Covers line 222: When secret version is specified but secret is not found,
+        returns None without falling back to 'latest'.
+        """
+        mock_client = MagicMock()
+        mock_credentials = MagicMock()
+        # No secrets in the list - simulate missing secret
+        mock_client.list_secrets.return_value = []
+        mock_client.common_project_path.return_value = 'projects/test-project'
+        mock_client.secret_version_path.return_value = 'path'
+
+        class TestSettings(BaseSettings):
+            missing_secret: str = ''
+
+            model_config = {'case_sensitive': True}  # type: ignore[assignment]
+
+        with patch('pydantic_settings.sources.providers.gcp.import_gcp_secret_manager'):
+            source = GoogleSecretManagerSettingsSource(
+                TestSettings,
+                credentials=mock_credentials,
+                project_id='test-project',
+                secret_client=mock_client,
+                case_sensitive=True,
+            )
+
+        field_info = FieldInfo(annotation=str, default='', metadata=[SecretVersion('v1')])
+        value, key, is_complex = source.get_field_value(field_info, 'missing_secret')
+
+        # Should return None when secret version is specified but secret not found
+        assert value is None
+        assert key == 'missing_secret'
+        assert is_complex is False
+
+    def test_get_field_value_with_secret_version_value_is_none(self) -> None:
+        """Test get_field_value with SecretVersion when _get_secret_value returns None.
+
+        Covers the iteration when env_val is None - the loop continues, and if no
+        value is found, line 222 returns None.
+        """
+        mock_client = MagicMock()
+        mock_credentials = MagicMock()
+        mock_secret = MagicMock()
+        mock_secret.name = 'projects/test-project/secrets/api_key'
+        mock_client.list_secrets.return_value = [mock_secret]
+        mock_client.common_project_path.return_value = 'projects/test-project'
+        mock_client.parse_secret_path.return_value = {'secret': 'api_key'}
+        # access_secret_version raises exception -> _get_secret_value returns None
+        mock_client.access_secret_version.side_effect = Exception('Version not found')
+        mock_client.secret_version_path.return_value = 'path'
+
+        class TestSettings(BaseSettings):
+            api_key: str = ''
+
+            model_config = {'case_sensitive': True}  # type: ignore[assignment]
+
+        with patch('pydantic_settings.sources.providers.gcp.import_gcp_secret_manager'):
+            source = GoogleSecretManagerSettingsSource(
+                TestSettings,
+                credentials=mock_credentials,
+                project_id='test-project',
+                secret_client=mock_client,
+                case_sensitive=True,
+            )
+
+        field_info = FieldInfo(annotation=str, default='', metadata=[SecretVersion('nonexistent')])
+        value, key, is_complex = source.get_field_value(field_info, 'api_key')
+
+        # Should return None when the versioned secret value is None
+        assert value is None
+        assert key == 'api_key'
+        assert is_complex is False
+
+    def test_get_field_value_without_secret_version_populate_by_name(self) -> None:
+        """Test get_field_value without SecretVersion but with populate_by_name enabled.
+
+        Covers lines 228-229: When no SecretVersion, falls through to super().get_field_value,
+        and if populate_by_name is True and val is not None, returns field_name.
+        """
+        mock_client = MagicMock()
+        mock_credentials = MagicMock()
+        mock_secret = MagicMock()
+        mock_secret.name = 'projects/test-project/secrets/my_alias'
+        mock_client.list_secrets.return_value = [mock_secret]
+        mock_client.common_project_path.return_value = 'projects/test-project'
+        mock_client.parse_secret_path.return_value = {'secret': 'my_alias'}
+        mock_response = MagicMock()
+        mock_response.payload.data.decode.return_value = 'secret_value'
+        mock_client.access_secret_version.return_value = mock_response
+        mock_client.secret_version_path.return_value = 'path'
+
+        class TestSettings(BaseSettings):
+            my_field: str = Field(default='', validation_alias='my_alias')
+
+            model_config = {'case_sensitive': True, 'populate_by_name': True}  # type: ignore[assignment]
+
+        with patch('pydantic_settings.sources.providers.gcp.import_gcp_secret_manager'):
+            source = GoogleSecretManagerSettingsSource(
+                TestSettings,
+                credentials=mock_credentials,
+                project_id='test-project',
+                secret_client=mock_client,
+                case_sensitive=True,
+            )
+
+        # No SecretVersion metadata - should use default path with populate_by_name
+        field_info = FieldInfo(annotation=str, default='', validation_alias='my_alias')
+        value, key, is_complex = source.get_field_value(field_info, 'my_field')
+
+        assert value == 'secret_value'
+        # When populate_by_name is True, should return field_name
+        assert key == 'my_field'
+
+    def test_get_field_value_without_secret_version_no_populate_by_name(self) -> None:
+        """Test get_field_value without SecretVersion and without populate_by_name.
+
+        Covers line 230: When no SecretVersion and populate_by_name is False,
+        returns the key from super().get_field_value unchanged.
+        """
+        mock_client = MagicMock()
+        mock_credentials = MagicMock()
+        mock_secret = MagicMock()
+        mock_secret.name = 'projects/test-project/secrets/my_alias'
+        mock_client.list_secrets.return_value = [mock_secret]
+        mock_client.common_project_path.return_value = 'projects/test-project'
+        mock_client.parse_secret_path.return_value = {'secret': 'my_alias'}
+        mock_response = MagicMock()
+        mock_response.payload.data.decode.return_value = 'secret_value'
+        mock_client.access_secret_version.return_value = mock_response
+        mock_client.secret_version_path.return_value = 'path'
+
+        class TestSettings(BaseSettings):
+            my_field: str = Field(default='', validation_alias='my_alias')
+
+            model_config = {'case_sensitive': True, 'populate_by_name': False}  # type: ignore[assignment]
+
+        with patch('pydantic_settings.sources.providers.gcp.import_gcp_secret_manager'):
+            source = GoogleSecretManagerSettingsSource(
+                TestSettings,
+                credentials=mock_credentials,
+                project_id='test-project',
+                secret_client=mock_client,
+                case_sensitive=True,
+            )
+
+        # No SecretVersion metadata
+        field_info = FieldInfo(annotation=str, default='', validation_alias='my_alias')
+        value, key, is_complex = source.get_field_value(field_info, 'my_field')
+
+        assert value == 'secret_value'
+        # When populate_by_name is False, should return the alias (field_key from super)
+        assert key == 'my_alias'
