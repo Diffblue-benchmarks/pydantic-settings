@@ -573,6 +573,36 @@ def test_annotation_contains_types_union():
     assert _annotation_contains_types(Union[int, str], (int,)) is True
 
 
+def test_annotation_contains_types_instance_check_origin_returns_true():
+    # Lines 183-184: is_instance=True, origin is instance of a type in types, collect=None
+    # list is an instance of type, so List[int] with types=(type,) should return True
+    result = _annotation_contains_types(List[int], (type,), is_instance=True)
+    assert result is True
+
+
+def test_annotation_contains_types_instance_check_origin_with_collect():
+    # Line 185: is_instance=True, origin is instance of a type in types, collect not None
+    collected: set[Any] = set()
+    _annotation_contains_types(List[int], (type,), is_instance=True, collect=collected)
+    assert List[int] in collected
+
+
+def test_annotation_contains_types_instance_annotation_with_collect():
+    # Line 202: is_instance=True, annotation itself is an instance of type in types, collect not None
+    T = TypeVar('T')
+    collected: set[Any] = set()
+    _annotation_contains_types(T, (TypeVar,), is_instance=True, collect=collected)
+    assert T in collected
+
+
+def test_annotation_contains_types_direct_match_with_collect():
+    # Line 205: annotation directly in types and collect is not None
+    collected: set[Any] = set()
+    result = _annotation_contains_types(int, (int,), collect=collected)
+    assert result is True
+    assert int in collected
+
+
 # ============================================================
 # Tests for _get_model_fields
 # ============================================================
