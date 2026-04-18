@@ -639,3 +639,62 @@ def test_union_is_complex_annotated_inner_json():
 def test_union_is_complex_annotated_inner_union_complex():
     annotation = Union[str, Annotated[Union[str, MyModel], 'meta']]
     assert _union_is_complex(annotation, []) is True
+
+
+# --- _resolve_type_alias with TypeAliasType ---
+
+
+def test_resolve_type_alias_simple_typealiastype():
+    """Resolve a non-parameterized TypeAliasType to its __value__."""
+    from typing_extensions import TypeAliasType
+
+    SimpleAlias = TypeAliasType('SimpleAlias', int)
+    result = _resolve_type_alias(SimpleAlias)
+    assert result is int
+
+
+def test_resolve_type_alias_parameterized_typealiastype():
+    """Resolve a parameterized TypeAliasType, substituting type params."""
+    from typing_extensions import TypeAliasType
+
+    T = TypeVar('T')
+    ListAlias = TypeAliasType('ListAlias', list[T], type_params=(T,))
+    result = _resolve_type_alias(ListAlias[int])
+    assert result == list[int]
+
+
+def test_resolve_type_alias_parameterized_typealiastype_multi_params():
+    """Resolve a parameterized TypeAliasType with multiple type params."""
+    from typing_extensions import TypeAliasType
+
+    K = TypeVar('K')
+    V = TypeVar('V')
+    DictAlias = TypeAliasType('DictAlias', dict[K, V], type_params=(K, V))
+    result = _resolve_type_alias(DictAlias[str, int])
+    assert result == dict[str, int]
+
+
+def test_resolve_type_alias_origin_no_type_params(mocker):
+    """Resolve when origin is a TypeAliasType with no type_params, falls back to __value__."""
+    mock_origin = type('FakeAlias', (), {'__type_params__': (), '__value__': int})()
+    mock_annotation = type('FakeSubscripted', (), {})()
+
+    mocker.patch(
+        'pydantic_settings.sources.utils.typing_objects.is_typealiastype',
+        side_effect=lambda x: x is mock_origin,
+    )
+    mocker.patch('pydantic_settings.sources.utils.get_origin', return_value=mock_origin)
+    mocker.patch('pydantic_settings.sources.utils.get_args', return_value=(int,))
+
+    result = _resolve_type_alias(mock_annotation)
+    assert result is int
+
+
+def test_resolve_type_alias_typealiastype_value_is_union():
+    """Resolve a TypeAliasType whose value is a Union type with substitution."""
+    from typing_extensions import TypeAliasType
+
+    T = TypeVar('T')
+    MaybeList = TypeAliasType('MaybeList', Union[T, list[T]], type_params=(T,))
+    result = _resolve_type_alias(MaybeList[str])
+    assert result == Union[str, list[str]]
