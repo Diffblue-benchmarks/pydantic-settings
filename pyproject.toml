@@ -75,6 +75,7 @@ linting = [
 testing = [
     "coverage[toml]",
     "pytest",
+    "pytest-cov",
     "pytest-examples",
     "pytest-mock",
     "pytest-pretty",
@@ -93,10 +94,7 @@ filterwarnings = [
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
 [tool.coverage.run]
-include = [
-    "pydantic_settings/**/*.py",
-    "tests/**/*.py",
-]
+source = ["pydantic_settings"]
 branch = true
 
 # https://coverage.readthedocs.io/en/latest/config.html#report
