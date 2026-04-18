@@ -638,3 +638,82 @@ class TestExplodeEnvVarsComplexFieldValueError:
             env_vars = {'inner__items': '["x", "y"]'}
             result = source.explode_env_vars('inner', field, env_vars)
             assert result == {'items': ['x', 'y']}
+
+
+class TestPrepareFieldValueEnumParsing:
+    """Tests for lines 117-118: env_parse_enums in prepare_field_value."""
+
+    def test_prepare_field_value_enum_parse_resolves_name(self):
+        """When env_parse_enums=True and value is an enum member name,
+        prepare_field_value converts it to the enum value."""
+
+        class Color(Enum):
+            RED = 'red'
+            GREEN = 'green'
+            BLUE = 'blue'
+
+        class EnumSettings(BaseSettings):
+            color: Color = Color.RED
+
+        with patch.dict(os.environ, {}, clear=True):
+            source = EnvSettingsSource(EnumSettings, env_parse_enums=True)
+            field = EnumSettings.model_fields['color']
+            result = source.prepare_field_value('color', field, 'GREEN', False)
+            assert result == Color.GREEN
+
+    def test_prepare_field_value_enum_parse_unknown_name_unchanged(self):
+        """When env_parse_enums=True but value is not a valid enum member name,
+        the value passes through unchanged."""
+
+        class Color(Enum):
+            RED = 'red'
+            GREEN = 'green'
+
+        class EnumSettings(BaseSettings):
+            color: Color = Color.RED
+
+        with patch.dict(os.environ, {}, clear=True):
+            source = EnvSettingsSource(EnumSettings, env_parse_enums=True)
+            field = EnumSettings.model_fields['color']
+            result = source.prepare_field_value('color', field, 'YELLOW', False)
+            assert result == 'YELLOW'
+
+    def test_prepare_field_value_enum_parse_disabled_no_conversion(self):
+        """When env_parse_enums=False (default), enum name is NOT converted."""
+
+        class Color(Enum):
+            RED = 'red'
+            GREEN = 'green'
+
+        class EnumSettings(BaseSettings):
+            color: Color = Color.RED
+
+        with patch.dict(os.environ, {}, clear=True):
+            source = EnvSettingsSource(EnumSettings, env_parse_enums=False)
+            field = EnumSettings.model_fields['color']
+            result = source.prepare_field_value('color', field, 'GREEN', False)
+            # Without enum parsing, 'GREEN' is returned as-is (simple field)
+            assert result == 'GREEN'
+
+
+class TestPrepareFieldValueComplexParseFailure:
+    """Tests for lines 132-134: ValueError handling when allow_parse_failure=True."""
+
+    def test_prepare_optional_complex_invalid_json_no_raise(self):
+        """When a union complex field (allow_parse_failure=True) gets invalid JSON,
+        the ValueError is caught and the original string value is returned."""
+        with patch.dict(os.environ, {}, clear=True):
+            source = EnvSettingsSource(OptionalComplexSettings)
+            field = OptionalComplexSettings.model_fields['maybe_sub']
+            # 'not_json' is not valid JSON, but allow_parse_failure=True for Optional[NestedSubModel]
+            result = source.prepare_field_value('maybe_sub', field, 'not_json', False)
+            assert result == 'not_json'
+
+    def test_prepare_optional_complex_valid_json_dict(self):
+        """When a union complex field gets valid JSON dict, it is decoded and returned."""
+        with patch.dict(os.environ, {}, clear=True):
+            source = EnvSettingsSource(OptionalComplexSettings)
+            field = OptionalComplexSettings.model_fields['maybe_sub']
+            result = source.prepare_field_value('maybe_sub', field, '{"val": "ok", "count": 5}', False)
+            assert isinstance(result, dict)
+            assert result['val'] == 'ok'
