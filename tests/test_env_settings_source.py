@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import os
 from typing import Any, Dict, List, Optional, Union
 from unittest.mock import patch
 
 import pytest
-from pydantic import BaseModel, Field, StrictBool
+from pydantic import BaseModel, Field, StrictBool, StrictInt
 from pydantic.fields import FieldInfo
 
 from pydantic_settings import BaseSettings
@@ -418,6 +419,80 @@ class TestCoerceEnvValStrict:
             field = StrictParseNoneSettings.model_fields['value']
             result = source._coerce_env_val_strict(field, 'null')
             assert result == 'null'
+
+    def test_strict_coerce_union_strict_bool_json_fallback_true(self):
+        """TypeAdapter fails for StrictBool string, json.loads('true') -> True succeeds."""
+
+        class UnionStrictBoolSettings(BaseSettings):
+            flag: Optional[StrictBool] = None
+
+        with patch.dict(os.environ, {}, clear=True):
+            source = EnvSettingsSource(UnionStrictBoolSettings)
+            field = UnionStrictBoolSettings.model_fields['flag']
+            result = source._coerce_env_val_strict(field, 'true')
+            assert result is True
+
+    def test_strict_coerce_union_strict_bool_json_fallback_false(self):
+        """TypeAdapter fails for StrictBool string, json.loads('false') -> False succeeds."""
+
+        class UnionStrictBoolSettings(BaseSettings):
+            flag: Optional[StrictBool] = None
+
+        with patch.dict(os.environ, {}, clear=True):
+            source = EnvSettingsSource(UnionStrictBoolSettings)
+            field = UnionStrictBoolSettings.model_fields['flag']
+            result = source._coerce_env_val_strict(field, 'false')
+            assert result is False
+
+    def test_strict_coerce_union_strict_int_json_fallback(self):
+        """TypeAdapter fails for StrictInt string, json.loads('42') -> 42 succeeds."""
+
+        class UnionStrictIntSettings(BaseSettings):
+            count: Optional[StrictInt] = None
+
+        with patch.dict(os.environ, {}, clear=True):
+            source = EnvSettingsSource(UnionStrictIntSettings)
+            field = UnionStrictIntSettings.model_fields['count']
+            result = source._coerce_env_val_strict(field, '42')
+            assert result == 42
+            assert isinstance(result, int)
+
+    def test_strict_coerce_json_decoded_string_returns_original(self):
+        """When json.loads returns a string, re-raise is caught by outer except, returns original."""
+
+        class UnionStrictBoolSettings(BaseSettings):
+            flag: Optional[StrictBool] = None
+
+        with patch.dict(os.environ, {}, clear=True):
+            source = EnvSettingsSource(UnionStrictBoolSettings)
+            field = UnionStrictBoolSettings.model_fields['flag']
+            result = source._coerce_env_val_strict(field, '"hello"')
+            assert result == '"hello"'
+
+    def test_strict_coerce_json_decode_failure_propagates(self):
+        """When json.loads fails with JSONDecodeError, the error propagates."""
+
+        class UnionStrictBoolSettings(BaseSettings):
+            flag: Optional[StrictBool] = None
+
+        with patch.dict(os.environ, {}, clear=True):
+            source = EnvSettingsSource(UnionStrictBoolSettings)
+            field = UnionStrictBoolSettings.model_fields['flag']
+            with pytest.raises(json.JSONDecodeError):
+                source._coerce_env_val_strict(field, 'yes')
+
+    def test_strict_coerce_json_fallback_invalid_decoded_returns_original(self):
+        """When json.loads succeeds but decoded value still fails validation, returns original."""
+
+        class UnionStrictBoolSettings(BaseSettings):
+            flag: Optional[StrictBool] = None
+
+        with patch.dict(os.environ, {}, clear=True):
+            source = EnvSettingsSource(UnionStrictBoolSettings)
+            field = UnionStrictBoolSettings.model_fields['flag']
+            # json.loads('42') -> 42 (int, not str), but 42 is not a valid StrictBool
+            result = source._coerce_env_val_strict(field, '42')
+            assert result == '42'
 
 
 # --- Tests for __repr__ ---
