@@ -733,6 +733,53 @@ class TestCliAppRunSubcommand:
         with pytest.raises((SystemExit, SettingsError)):
             CliApp.run(MySettings, cli_args=[], cli_exit_on_error=False)
 
+    def test_run_subcommand_not_in_stack(self) -> None:
+        ran = []
+
+        class SubCmd(BaseModel):
+            name: str = 'sub_default'
+
+            def cli_cmd(self) -> None:
+                ran.append(True)
+
+        class MySettings(BaseSettings):
+            sub: CliSubCommand[SubCmd]
+
+        # Create instance directly (not through CliApp.run), so id is not in _subcommand_stack
+        model = MySettings(_cli_parse_args=['sub', '--name', 'test_val'])
+        assert id(model) not in CliApp._subcommand_stack
+
+        # This will hit the else branch: lines 775-777
+        result = CliApp.run_subcommand(model)
+        assert ran == [True]
+        assert model.sub.name == 'test_val'
+
+    def test_run_subcommand_error_reraise_with_cause(self) -> None:
+        class SubCmd(BaseModel):
+            name: str = 'sub_default'
+
+            def cli_cmd(self) -> None:
+                pass
+
+        class MySettings(BaseSettings):
+            sub: CliSubCommand[SubCmd]
+
+        model = MySettings(_cli_parse_args=['sub', '--name', 'val'])
+
+        original_err = ValueError('original')
+        caused_err = SettingsError('Error: CLI subcommand is required {sub}')
+        caused_err.__cause__ = original_err
+
+        def mock_get_subcommand(model, is_required=True, cli_exit_on_error=None, _suppress_errors=None):
+            if _suppress_errors is not None:
+                _suppress_errors.append(caused_err)
+            return None
+
+        with patch('pydantic_settings.main.get_subcommand', side_effect=mock_get_subcommand):
+            with pytest.raises(SettingsError, match='CLI subcommand is required') as exc_info:
+                CliApp.run_subcommand(model, cli_exit_on_error=False)
+        assert exc_info.value.__cause__ is original_err
+
 
 # ──────────────────────────────────────────────────────────────────────
 # CliApp.serialize
