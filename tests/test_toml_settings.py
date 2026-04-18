@@ -121,6 +121,31 @@ def test_init_missing_file_ignored() -> None:
     assert source.toml_data == {}
 
 
+def test_import_toml_python_lt_311_tomli_already_set(mocker) -> None:
+    import pydantic_settings.sources.providers.toml as toml_module
+
+    sentinel = object()
+    mock_sys = mocker.patch('pydantic_settings.sources.providers.toml.sys')
+    mock_sys.version_info = (3, 10, 0)
+    mocker.patch.object(toml_module, 'tomli', sentinel)
+    import_toml()
+    assert toml_module.tomli is sentinel
+
+
+def test_import_toml_python_lt_311_imports_tomli(mocker) -> None:
+    import types
+
+    import pydantic_settings.sources.providers.toml as toml_module
+
+    mock_tomli_module = types.ModuleType('tomli')
+    mock_sys = mocker.patch('pydantic_settings.sources.providers.toml.sys')
+    mock_sys.version_info = (3, 10, 0)
+    mocker.patch.object(toml_module, 'tomli', None)
+    mocker.patch.dict('sys.modules', {'tomli': mock_tomli_module})
+    import_toml()
+    assert toml_module.tomli is mock_tomli_module
+
+
 def test_toml_data_populates_settings(toml_file: Path) -> None:
     class MySettings(BaseSettings):
         model_config = {'toml_file': toml_file, 'extra': 'ignore'}
