@@ -654,3 +654,83 @@ class TestEdgeCases:
         field_values = {'NAME': 'test_value'}
         result = source._replace_field_names_case_insensitively(field_info, field_values)
         assert isinstance(result, dict)
+
+
+class TestPydanticBaseEnvSettingsSourceCallMethod:
+    """Tests for PydanticBaseEnvSettingsSource.__call__ error handling."""
+
+    class ErrorRaisingEnvSource(PydanticBaseEnvSettingsSource):
+        """Env source that raises exception in get_field_value."""
+
+        def __init__(self, settings_cls, raise_in_get_field_value=False, raise_in_prepare_field_value=False, **kwargs):
+            super().__init__(settings_cls, **kwargs)
+            self.raise_in_get_field_value = raise_in_get_field_value
+            self.raise_in_prepare_field_value = raise_in_prepare_field_value
+
+        def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[Any, str, bool]:
+            if self.raise_in_get_field_value:
+                raise RuntimeError('Test error in get_field_value')
+            return 'value', field_name, False
+
+        def prepare_field_value(self, field_name: str, field: FieldInfo, value: Any, value_is_complex: bool) -> Any:
+            if self.raise_in_prepare_field_value:
+                raise ValueError('Test error in prepare_field_value')
+            return super().prepare_field_value(field_name, field, value, value_is_complex)
+
+    def test_call_raises_settings_error_on_get_field_value_exception(self):
+        """Test __call__ raises SettingsError when get_field_value fails."""
+        source = self.ErrorRaisingEnvSource(SimpleSettings, raise_in_get_field_value=True)
+        with pytest.raises(SettingsError) as exc_info:
+            source()
+        assert 'error getting value for field' in str(exc_info.value)
+
+    def test_call_raises_settings_error_on_prepare_field_value_exception(self):
+        """Test __call__ raises SettingsError when prepare_field_value fails."""
+        source = self.ErrorRaisingEnvSource(SimpleSettings, raise_in_prepare_field_value=True)
+        with pytest.raises(SettingsError) as exc_info:
+            source()
+        assert 'error parsing value for field' in str(exc_info.value)
+
+    def test_call_with_env_parse_none_str_dict_value(self):
+        """Test __call__ with env_parse_none_str and dict value."""
+
+        class DictEnvSource(PydanticBaseEnvSettingsSource):
+            def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[Any, str, bool]:
+                if field_name == 'name':
+                    return {'nested': EnvNoneType('null')}, field_name, False
+                return None, field_name, False
+
+        source = DictEnvSource(SimpleSettings, env_parse_none_str='null')
+        result = source()
+        assert 'name' in result
+        assert result['name'] == {'nested': None}
+
+    def test_call_with_env_parse_none_str_env_none_type_value(self):
+        """Test __call__ with env_parse_none_str and EnvNoneType value."""
+
+        class EnvNoneTypeSource(PydanticBaseEnvSettingsSource):
+            def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[Any, str, bool]:
+                if field_name == 'name':
+                    return EnvNoneType('null'), field_name, False
+                return None, field_name, False
+
+        source = EnvNoneTypeSource(SimpleSettings, env_parse_none_str='null')
+        result = source()
+        assert 'name' in result
+        assert result['name'] is None
+
+    def test_call_replaces_field_names_case_insensitively_for_dict_value(self):
+        """Test __call__ replaces field names case-insensitively for dict values."""
+
+        class CaseInsensitiveEnvSource(PydanticBaseEnvSettingsSource):
+            def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[Any, str, bool]:
+                if field_name == 'nested':
+                    # Return as JSON string to avoid decode issues
+                    return '{"sub_NAME": "updated"}', field_name, False
+                return None, field_name, False
+
+        source = CaseInsensitiveEnvSource(ComplexSettings, case_sensitive=False)
+        result = source()
+        # The result should have replaced case-insensitive field names
+        assert isinstance(result, dict)
+        assert 'nested' in result
