@@ -483,6 +483,52 @@ class TestEnvSettingsSourceCoerceEnvValStrict:
             result = source._coerce_env_val_strict(None, 'test')
             assert result == 'test'
 
+    def test_coerce_env_val_strict_env_parse_none_str(self):
+        """Test _coerce_env_val_strict returns value unchanged when it matches env_parse_none_str."""
+
+        class Settings(BaseSettings):
+            flag: Optional[StrictBool] = None
+            model_config = {'strict': True, 'env_parse_none_str': 'null'}
+
+        with patch.dict(os.environ, {}, clear=True):
+            source = EnvSettingsSource(Settings)
+            field = Settings.model_fields['flag']
+            # When value matches env_parse_none_str, it should return the value as-is (line 304)
+            result = source._coerce_env_val_strict(field, 'null')
+            assert result == 'null'
+
+    def test_coerce_env_val_strict_invalid_json_raises(self):
+        """Test _coerce_env_val_strict raises JSONDecodeError for invalid JSON string."""
+
+        class Settings(BaseSettings):
+            flag: Optional[StrictBool] = None
+            model_config = {'strict': True}
+
+        with patch.dict(os.environ, {}, clear=True):
+            source = EnvSettingsSource(Settings)
+            field = Settings.model_fields['flag']
+            # 'not_valid_json' cannot be parsed by TypeAdapter for StrictBool,
+            # and also cannot be decoded by json.loads (lines 312-313)
+            # The exception re-raises and propagates
+            with pytest.raises(json.JSONDecodeError):
+                source._coerce_env_val_strict(field, 'not_valid_json')
+
+    def test_coerce_env_val_strict_json_decodes_to_string(self):
+        """Test _coerce_env_val_strict when JSON decodes to a string value."""
+
+        class Settings(BaseSettings):
+            flag: Optional[StrictBool] = None
+            model_config = {'strict': True}
+
+        with patch.dict(os.environ, {}, clear=True):
+            source = EnvSettingsSource(Settings)
+            field = Settings.model_fields['flag']
+            # '"hello"' is valid JSON that decodes to a string "hello"
+            # This triggers the isinstance(decoded, str) check (lines 316-317)
+            result = source._coerce_env_val_strict(field, '"hello"')
+            # Should return the original value when JSON decodes to a string
+            assert result == '"hello"'
+
 
 class TestEnvSettingsSourceRepr:
     """Tests for EnvSettingsSource.__repr__"""
