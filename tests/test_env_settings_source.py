@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional, Union
 from unittest.mock import patch
 
 import pytest
+from enum import Enum
 from pydantic import BaseModel, Field, StrictBool, StrictInt
 from pydantic.fields import FieldInfo
 
@@ -570,3 +571,69 @@ class TestIntegration:
             assert settings.app_name == 'default'
             assert settings.debug is False
             assert settings.count == 0
+
+
+# --- Tests for prepare_field_value: env_parse_enums (lines 117-118) ---
+
+
+class Color(Enum):
+    RED = 'red'
+    GREEN = 'green'
+    BLUE = 'blue'
+
+
+class EnumSettings(BaseSettings):
+    model_config = {'env_parse_enums': True}
+
+    color: Color = Color.RED
+
+
+class TestPrepareFieldValueEnvParseEnums:
+    def test_enum_name_resolved_to_value(self):
+        """When env_parse_enums=True and value matches an enum member name, resolve it."""
+        with patch.dict(os.environ, {}, clear=True):
+            source = EnvSettingsSource(EnumSettings, env_parse_enums=True)
+            field = EnumSettings.model_fields['color']
+            result = source.prepare_field_value('color', field, 'GREEN', False)
+            assert result == Color.GREEN
+
+    def test_enum_name_not_matched_keeps_original(self):
+        """When env_parse_enums=True but value doesn't match any enum name, keep the original."""
+        with patch.dict(os.environ, {}, clear=True):
+            source = EnvSettingsSource(EnumSettings, env_parse_enums=True)
+            field = EnumSettings.model_fields['color']
+            result = source.prepare_field_value('color', field, 'PURPLE', False)
+            assert result == 'PURPLE'
+
+    def test_enum_integration_via_env(self):
+        """Integration: setting an enum member name via env var with env_parse_enums=True."""
+        with patch.dict(os.environ, {'COLOR': 'BLUE'}, clear=True):
+            settings = EnumSettings()
+            assert settings.color == Color.BLUE
+
+
+# --- Tests for prepare_field_value: ValueError handling (lines 132-134) ---
+
+
+class TestPrepareFieldValueComplexDecodeError:
+    def test_complex_union_invalid_json_allows_parse_failure(self):
+        """When a union-complex field gets invalid JSON, allow_parse_failure=True swallows ValueError."""
+        with patch.dict(os.environ, {}, clear=True):
+            source = EnvSettingsSource(OptionalComplexSettings)
+            field = OptionalComplexSettings.model_fields['sub']
+            # OptionalComplexSettings.sub is Optional[NestedSubModel],
+            # _field_is_complex returns (True, True) so allow_parse_failure=True
+            # 'not-valid-json' will cause json.JSONDecodeError (subclass of ValueError)
+            # Since allow_parse_failure=True, the error is swallowed and value is returned as-is
+            result = source.prepare_field_value('sub', field, 'not-valid-json', False)
+            assert result == 'not-valid-json'
+
+    def test_complex_field_invalid_json_raises(self):
+        """When a directly complex field gets invalid JSON, allow_parse_failure=False re-raises."""
+        with patch.dict(os.environ, {}, clear=True):
+            source = EnvSettingsSource(ComplexSettings)
+            field = ComplexSettings.model_fields['items']
+            # ComplexSettings.items is List[str], _field_is_complex returns (True, False)
+            # so allow_parse_failure=False, ValueError should propagate
+            with pytest.raises(ValueError):
+                source.prepare_field_value('items', field, 'not-valid-json', False)
