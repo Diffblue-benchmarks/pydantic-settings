@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import os
-from typing import Dict, List, Optional, Union
+from enum import Enum
+from typing import Any, Dict, List, Optional, Union
 
 import pytest
 from pydantic import BaseModel, Field, StrictBool, StrictInt
@@ -61,6 +62,41 @@ class StrictSettings(BaseSettings):
 
 class UnionSettings(BaseSettings):
     value: Union[int, str] = ''
+
+
+class MyColor(Enum):
+    RED = 'red'
+    BLUE = 'blue'
+
+
+class SubWithEnum(BaseModel):
+    color: MyColor = MyColor.RED
+
+
+class SettingsWithEnumSub(BaseSettings):
+    sub: SubWithEnum = SubWithEnum()
+
+    model_config = {'env_nested_delimiter': '__'}
+
+
+class AnyDictSettings(BaseSettings):
+    data: Dict[str, Any] = {}
+
+    model_config = {'env_nested_delimiter': '__'}
+
+
+class InnerComplexModel(BaseModel):
+    items: List[str] = []
+
+
+class OuterComplexModel(BaseModel):
+    inner: InnerComplexModel = InnerComplexModel()
+
+
+class DeepComplexSettings(BaseSettings):
+    outer: OuterComplexModel = OuterComplexModel()
+
+    model_config = {'env_nested_delimiter': '__'}
 
 
 # ---------------------------------------------------------------------------
@@ -401,6 +437,41 @@ class TestExplodeEnvVars:
         result = src.explode_env_vars('nested', field, env_vars)
         # EnvNoneType value in already-set key should be preserved
         assert isinstance(result.get('x'), EnvNoneType)
+
+    def test_explode_env_vars_env_parse_enums_converts_enum_name(self, monkeypatch):
+        monkeypatch.setenv('SUB__COLOR', 'RED')
+        src = EnvSettingsSource(SettingsWithEnumSub, env_parse_enums=True)
+        field = SettingsWithEnumSub.model_fields['sub']
+        result = src.explode_env_vars('sub', field, src.env_vars)
+        assert result.get('color') == MyColor.RED
+
+    def test_explode_env_vars_env_parse_enums_unknown_name_unchanged(self, monkeypatch):
+        monkeypatch.setenv('SUB__COLOR', 'UNKNOWN')
+        src = EnvSettingsSource(SettingsWithEnumSub, env_parse_enums=True)
+        field = SettingsWithEnumSub.model_fields['sub']
+        result = src.explode_env_vars('sub', field, src.env_vars)
+        assert result.get('color') == 'UNKNOWN'
+
+    def test_explode_env_vars_dict_any_deep_nesting_else_branch(self, monkeypatch):
+        monkeypatch.setenv('DATA__KEY1__SUBKEY', '{"a": 1}')
+        src = EnvSettingsSource(AnyDictSettings)
+        field = AnyDictSettings.model_fields['data']
+        result = src.explode_env_vars('data', field, src.env_vars)
+        assert result.get('key1', {}).get('subkey') == {'a': 1}
+
+    def test_explode_env_vars_dict_any_deep_nesting_invalid_json_silent(self, monkeypatch):
+        monkeypatch.setenv('DATA__KEY1__SUBKEY', 'not-valid-json')
+        src = EnvSettingsSource(AnyDictSettings)
+        field = AnyDictSettings.model_fields['data']
+        result = src.explode_env_vars('data', field, src.env_vars)
+        assert result.get('key1', {}).get('subkey') == 'not-valid-json'
+
+    def test_explode_env_vars_complex_nested_raises_on_invalid_json(self, monkeypatch):
+        monkeypatch.setenv('OUTER__INNER__ITEMS', 'not-valid-json')
+        src = EnvSettingsSource(DeepComplexSettings)
+        field = DeepComplexSettings.model_fields['outer']
+        with pytest.raises(ValueError):
+            src.explode_env_vars('outer', field, src.env_vars)
 
 
 # ---------------------------------------------------------------------------
