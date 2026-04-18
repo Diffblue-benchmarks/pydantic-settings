@@ -567,6 +567,55 @@ class TestAnnotationContainsTypesAdvanced:
         )
         assert len(collected) == 2
 
+    def test_is_instance_origin_with_collect(self):
+        """Test that when is_instance=True, origin is instance of types, and collect is provided, it adds to collect."""
+        collected: set[Any] = set()
+        # List[int] has origin=list, and list is an instance of type
+        result = _annotation_contains_types(
+            List[int], (type,), is_instance=True, collect=collected
+        )
+        # Should return True at the end because of annotation in types or other conditions
+        # List[int] origin is list which is an instance of type, so it should be added to collect
+        assert List[int] in collected
+
+    def test_is_instance_annotation_itself_with_collect(self):
+        """Test is_instance check on annotation itself (not origin) with collect (line 200-202)."""
+        collected: set[Any] = set()
+        # Use int as annotation and check if it's an instance of 'type' class
+        # This will hit line 199-202 since int is an instance of type
+        # Also include int in types so the function returns True at the end
+        result = _annotation_contains_types(
+            int, (type, int), is_instance=True, is_include_origin=False, collect=collected
+        )
+        # The function should return True because int is in (type, int)
+        # and should add int to collected via line 202 (is_instance check on annotation)
+        # and also via line 205 (direct match)
+        assert result is True
+        assert int in collected
+
+    def test_is_instance_annotation_itself_returns_true(self):
+        """Test is_instance check on annotation itself returns True without collect."""
+        T = TypeVar('T')
+        result = _annotation_contains_types(
+            T, (TypeVar,), is_instance=True, is_include_origin=False
+        )
+        assert result is True
+
+    def test_direct_type_match_with_collect(self):
+        """Test that when annotation is directly in types and collect is provided, it adds to collect."""
+        collected: set[Any] = set()
+        result = _annotation_contains_types(int, (int, str), collect=collected)
+        assert result is True
+        assert int in collected
+
+    def test_direct_type_match_with_collect_no_origin_match(self):
+        """Test direct type match with collect when origin doesn't match."""
+        collected: set[Any] = set()
+        # Use a simple type that won't match origin checks but will match direct type check
+        result = _annotation_contains_types(str, (str,), collect=collected)
+        assert result is True
+        assert str in collected
+
 
 class TestUnionIsComplexWithAnnotated:
     """Tests for _union_is_complex with Annotated types."""
