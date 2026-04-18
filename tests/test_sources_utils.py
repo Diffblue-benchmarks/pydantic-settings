@@ -174,6 +174,47 @@ def test_substitute_typevars_no_substitution_needed():
     assert result == List[int]
 
 
+def test_substitute_typevars_unsubscriptable_origin_triggers_or_reduce(mocker):
+    """TypeError when subscripting origin triggers functools.reduce with | operator (lines 59, 62, 63, 65)."""
+    T = TypeVar('T')
+    tp = Union[T, str]
+
+    class _RaisesTypeError:
+        @classmethod
+        def __class_getitem__(cls, item):
+            raise TypeError('cannot subscript')
+
+    real_get_origin = get_origin
+
+    def side_effect(x):
+        if x is tp:
+            return _RaisesTypeError
+        return real_get_origin(x)
+
+    mocker.patch('pydantic_settings.sources.utils.get_origin', side_effect=side_effect)
+    result = _substitute_typevars(tp, {T: int})
+    import types
+    assert isinstance(result, types.UnionType)
+    assert set(get_args(result)) == {int, str}
+
+
+def test_substitute_typevars_returns_tp_when_origin_is_none(mocker):
+    """When origin is None after args substitution, tp is returned unchanged (line 66)."""
+    T = TypeVar('T')
+    tp = Union[T, str]
+
+    real_get_origin = get_origin
+
+    def side_effect(x):
+        if x is tp:
+            return None
+        return real_get_origin(x)
+
+    mocker.patch('pydantic_settings.sources.utils.get_origin', side_effect=side_effect)
+    result = _substitute_typevars(tp, {T: int})
+    assert result is tp
+
+
 # ============================================================
 # Tests for _resolve_type_alias (Python 3.12+)
 # ============================================================
