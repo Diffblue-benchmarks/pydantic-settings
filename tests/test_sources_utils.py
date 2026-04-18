@@ -146,6 +146,61 @@ class TestResolveTypeAlias:
         result = _resolve_type_alias(None)
         assert result is None
 
+    def test_simple_type_alias(self):
+        """Test resolving a simple TypeAliasType to its underlying value."""
+        # Using exec to create TypeAliasType with 'type' statement (Python 3.12+)
+        # This tests line 72: return annotation.__value__
+        local_ns: dict[str, Any] = {}
+        exec('type StringList = list[str]', {}, local_ns)
+        StringList = local_ns['StringList']
+        result = _resolve_type_alias(StringList)
+        assert result == list[str]
+
+    def test_parameterized_type_alias_with_type_params(self):
+        """Test resolving a parameterized generic TypeAliasType."""
+        # This tests lines 75-79: when origin is TypeAliasType and has type params
+        local_ns: dict[str, Any] = {}
+        exec('type GenericList[T] = list[T]', {'T': TypeVar('T')}, local_ns)
+        GenericList = local_ns['GenericList']
+        # Parameterize the type alias
+        parameterized = GenericList[int]
+        result = _resolve_type_alias(parameterized)
+        from typing import get_args, get_origin
+        assert get_origin(result) is list
+        assert get_args(result) == (int,)
+
+    def test_parameterized_type_alias_without_type_args(self):
+        """Test resolving a parameterized type alias origin without args returns value directly."""
+        # This tests line 80: return value when type_params or type_args is empty
+        local_ns: dict[str, Any] = {}
+        # Create a type alias without type parameters but still a TypeAliasType
+        exec('type SimpleAlias = dict[str, int]', {}, local_ns)
+        SimpleAlias = local_ns['SimpleAlias']
+        result = _resolve_type_alias(SimpleAlias)
+        assert result == dict[str, int]
+
+    def test_parameterized_type_alias_complex_substitution(self):
+        """Test resolving a more complex parameterized type alias with substitution."""
+        # Using typing_extensions.TypeAliasType for better control
+        try:
+            from typing import TypeAliasType
+        except ImportError:
+            pytest.skip('TypeAliasType not available in this Python version')
+
+        T = TypeVar('T')
+        K = TypeVar('K')
+        # Create a TypeAliasType with type parameters
+        MyMapping = TypeAliasType('MyMapping', dict[K, list[T]], type_params=(K, T))
+        # Parameterize it
+        parameterized = MyMapping[str, int]
+        result = _resolve_type_alias(parameterized)
+        from typing import get_args, get_origin
+        assert get_origin(result) is dict
+        args = get_args(result)
+        assert args[0] is str
+        assert get_origin(args[1]) is list
+        assert get_args(args[1]) == (int,)
+
 
 class TestAnnotationIsComplex:
     """Tests for _annotation_is_complex function."""
