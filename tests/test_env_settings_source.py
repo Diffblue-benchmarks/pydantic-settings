@@ -241,6 +241,73 @@ class TestEnvSettingsSourcePrepareFieldValue:
             result = source.prepare_field_value('name', field, None, False)
             assert result is None
 
+    def test_prepare_field_value_env_none_type_returns_early(self):
+        """Test prepare_field_value returns early when value is EnvNoneType (line 122).
+
+        When a complex field receives an EnvNoneType value, it should be returned
+        directly without further processing.
+        """
+        from pydantic_settings.sources.types import EnvNoneType
+
+        class Settings(BaseSettings):
+            data: Dict[str, Any] = Field(default_factory=dict)
+
+        with patch.dict(os.environ, {}, clear=True):
+            source = EnvSettingsSource(Settings)
+            field = Settings.model_fields['data']
+            env_none_val = EnvNoneType('null')
+            # value_is_complex=True ensures we enter the complex branch
+            result = source.prepare_field_value('data', field, env_none_val, True)
+            # Line 122: should return the EnvNoneType value unchanged
+            assert result is env_none_val
+            assert isinstance(result, EnvNoneType)
+
+    def test_prepare_field_value_complex_union_decode_error_allowed(self):
+        """Test prepare_field_value when decode fails for union with allow_parse_failure=True (lines 132-134).
+
+        When a field is a union containing complex types (like Optional[Dict]),
+        allow_parse_failure is True. If decode_complex_value raises ValueError,
+        the error is caught and not re-raised.
+        """
+
+        class Settings(BaseSettings):
+            # Optional[Dict] is a union with a complex type, so allow_parse_failure=True
+            data: Optional[Dict[str, Any]] = None
+
+        with patch.dict(os.environ, {}, clear=True):
+            source = EnvSettingsSource(Settings)
+            field = Settings.model_fields['data']
+            # Invalid JSON that cannot be decoded - this triggers the ValueError path
+            # value_is_complex=True to enter the complex branch with a non-None value
+            result = source.prepare_field_value('data', field, 'not_valid_json', True)
+            # Lines 132-134: ValueError is caught, allow_parse_failure=True, so no re-raise
+            # The invalid value remains and is returned (possibly merged with explode_env_vars)
+            assert result == 'not_valid_json'
+
+    def test_prepare_field_value_union_complex_invalid_json_no_exception(self):
+        """Test prepare_field_value handles invalid JSON for union field without raising (lines 132-134).
+
+        This ensures when decode_complex_value fails for a union type with complex members,
+        the ValueError is silently caught due to allow_parse_failure=True.
+        """
+
+        class SubModel2(BaseModel):
+            val: str = 'default'
+
+        class Settings(BaseSettings):
+            # Union[SubModel2, None] - _union_is_complex returns True, so is_complex=True
+            # But since it's detected via the union path, allow_parse_failure=True
+            sub: Union[SubModel2, None] = None
+
+        with patch.dict(os.environ, {}, clear=True):
+            source = EnvSettingsSource(Settings)
+            field = Settings.model_fields['sub']
+            # Provide invalid JSON - this should trigger decode_complex_value which raises ValueError
+            result = source.prepare_field_value('sub', field, '{invalid_json}', True)
+            # The error is caught at lines 132-134 and not re-raised because allow_parse_failure=True
+            # When JSON decode fails and it's not a dict, the original value is returned
+            assert result == '{invalid_json}'
+
 
 class TestEnvSettingsSourceFieldIsComplex:
     """Tests for EnvSettingsSource._field_is_complex"""
