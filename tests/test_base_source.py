@@ -70,6 +70,53 @@ class ConcreteEnvSettingsSource(PydanticBaseEnvSettingsSource):
         return super().__call__()
 
 
+class ErrorOnGetFieldSource(PydanticBaseEnvSettingsSource):
+    """Source whose get_field_value always raises, for testing __call__ error handling."""
+
+    def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[Any, str, bool]:
+        raise RuntimeError('simulated lookup failure')
+
+    def __call__(self) -> dict[str, Any]:
+        return super().__call__()
+
+
+class InvalidJsonSource(PydanticBaseEnvSettingsSource):
+    """Source that returns invalid JSON to trigger ValueError in prepare_field_value."""
+
+    def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[Any, str, bool]:
+        return '{bad json', field_name, True
+
+    def __call__(self) -> dict[str, Any]:
+        return super().__call__()
+
+
+class ControlledValueSource(PydanticBaseEnvSettingsSource):
+    """Source with pre-configured resolved values and passthrough prepare_field_value."""
+
+    def __init__(
+        self,
+        settings_cls: type[BaseSettings],
+        resolved_values: dict[str, tuple[Any, str, bool]] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(settings_cls, **kwargs)
+        self._resolved_values = resolved_values or {}
+
+    def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[Any, str, bool]:
+        return None, field_name, False
+
+    def _get_resolved_field_value(self, field: FieldInfo, field_name: str) -> tuple[Any, str, bool]:
+        if field_name in self._resolved_values:
+            return self._resolved_values[field_name]
+        return None, field_name, False
+
+    def prepare_field_value(self, field_name: str, field: FieldInfo, value: Any, value_is_complex: bool) -> Any:
+        return value
+
+    def __call__(self) -> dict[str, Any]:
+        return super().__call__()
+
+
 # ---------------------------------------------------------------------------
 # get_subcommand tests
 # ---------------------------------------------------------------------------
@@ -718,3 +765,98 @@ def test_read_files_expanduser(tmp_path):
     source = ConcreteConfigFileSource()
     result = source._read_files(f)
     assert result == {'expand': True}
+
+
+# ---------------------------------------------------------------------------
+# PydanticBaseEnvSettingsSource.__call__ – error handling and branch coverage
+# ---------------------------------------------------------------------------
+
+
+def test_call_raises_settings_error_on_get_resolved_field_exception():
+    """Lines 545-546: _get_resolved_field_value raising wraps in SettingsError."""
+    source = ErrorOnGetFieldSource(SimpleSettings)
+    with pytest.raises(SettingsError, match='error getting value for field "my_var"'):
+        source()
+
+
+def test_call_raises_settings_error_on_prepare_value_error():
+    """Lines 552-553: ValueError from prepare_field_value wraps in SettingsError."""
+    source = InvalidJsonSource(SimpleSettings)
+    with pytest.raises(SettingsError, match='error parsing value for field "my_var"'):
+        source()
+
+
+def test_call_env_parse_none_str_replaces_dict_env_none_values():
+    """Lines 558-560: dict values with EnvNoneType entries are replaced with None."""
+    source = ControlledValueSource(
+        SimpleSettings,
+        resolved_values={
+            'my_var': ({'key': EnvNoneType('null'), 'other': 'val'}, 'my_var', False),
+        },
+        env_parse_none_str='null',
+        case_sensitive=True,
+    )
+    result = source()
+    assert result['my_var'] == {'key': None, 'other': 'val'}
+
+
+def test_call_env_parse_none_str_replaces_scalar_env_none_with_none():
+    """Lines 561-562: scalar EnvNoneType value is replaced with None."""
+    source = ControlledValueSource(
+        SimpleSettings,
+        resolved_values={
+            'my_var': (EnvNoneType('null'), 'my_var', False),
+        },
+        env_parse_none_str='null',
+        case_sensitive=True,
+    )
+    result = source()
+    assert result['my_var'] is None
+
+
+def test_call_case_insensitive_dict_replaces_field_names():
+    """Line 568: case_sensitive=False with dict triggers _replace_field_names_case_insensitively."""
+
+    class Inner(BaseModel):
+        MyField: str = 'default'
+
+    class NestedCaseSettings(BaseSettings):
+        model_config = {'extra': 'forbid'}
+        nested: Inner = Inner()
+
+    source = ControlledValueSource(
+        NestedCaseSettings,
+        resolved_values={
+            'nested': ({'myfield': 'test_value'}, 'nested', False),
+        },
+        case_sensitive=False,
+    )
+    result = source()
+    assert 'MyField' in result['nested']
+    assert result['nested']['MyField'] == 'test_value'
+
+
+def test_call_assigns_non_dict_value_to_data():
+    """Line 570: non-dict value goes through else branch to data[field_key]."""
+    source = ControlledValueSource(
+        SimpleSettings,
+        resolved_values={
+            'my_var': ('test_value', 'my_var', False),
+        },
+        case_sensitive=False,
+    )
+    result = source()
+    assert result == {'my_var': 'test_value'}
+
+
+def test_call_case_sensitive_true_assigns_dict_directly():
+    """Line 570: case_sensitive=True bypasses case-insensitive replacement for dict values."""
+    source = ControlledValueSource(
+        SimpleSettings,
+        resolved_values={
+            'my_var': ({'key': 'value'}, 'my_var', False),
+        },
+        case_sensitive=True,
+    )
+    result = source()
+    assert result == {'my_var': {'key': 'value'}}
