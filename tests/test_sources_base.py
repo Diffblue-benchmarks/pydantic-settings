@@ -579,6 +579,97 @@ class TestPydanticBaseEnvSettingsSource:
         )
         assert value == 'test'
 
+    def test_call_raises_settings_error_on_get_field_value_exception(self):
+        """Test lines 545-546: SettingsError raised when _get_resolved_field_value fails."""
+
+        class FailingEnvSource(PydanticBaseEnvSettingsSource):
+            """Source that fails during get_field_value."""
+
+            def get_field_value(self, field, field_name):
+                raise RuntimeError('Simulated failure in get_field_value')
+
+        source = FailingEnvSource(SimpleSettings)
+        with pytest.raises(SettingsError) as exc_info:
+            source()
+
+        assert 'error getting value for field "name"' in str(exc_info.value)
+        assert 'FailingEnvSource' in str(exc_info.value)
+        assert isinstance(exc_info.value.__cause__, RuntimeError)
+
+    def test_call_raises_settings_error_on_prepare_field_value_error(self):
+        """Test lines 552-553: SettingsError raised when prepare_field_value raises ValueError."""
+
+        class FailingPrepareEnvSource(PydanticBaseEnvSettingsSource):
+            """Source that fails during prepare_field_value."""
+
+            def get_field_value(self, field, field_name):
+                return 'invalid_json', field_name, True
+
+            def prepare_field_value(self, field_name, field, value, value_is_complex):
+                raise ValueError('Simulated failure in prepare_field_value')
+
+        source = FailingPrepareEnvSource(SimpleSettings)
+        with pytest.raises(SettingsError) as exc_info:
+            source()
+
+        assert 'error parsing value for field "name"' in str(exc_info.value)
+        assert 'FailingPrepareEnvSource' in str(exc_info.value)
+        assert isinstance(exc_info.value.__cause__, ValueError)
+
+    def test_call_replaces_env_none_type_in_dict(self):
+        """Test line 560: _replace_env_none_type_values called for dict field_value."""
+
+        class DictEnvSource(PydanticBaseEnvSettingsSource):
+            """Source that returns a dict containing EnvNoneType values."""
+
+            def get_field_value(self, field, field_name):
+                if field_name == 'data':
+                    # Return dict already decoded, mark as not complex to skip decoding
+                    return {'key1': 'value1', 'key2': EnvNoneType('null')}, field_name, False
+
+                return None, field_name, False
+
+            def prepare_field_value(self, field_name, field, value, value_is_complex):
+                # Return value as-is without decoding
+                return value
+
+        source = DictEnvSource(ComplexSettings, env_parse_none_str='null')
+        result = source()
+
+        assert 'data' in result
+        assert result['data']['key1'] == 'value1'
+        assert result['data']['key2'] is None
+
+    def test_call_replaces_field_names_case_insensitively(self):
+        """Test line 568: _replace_field_names_case_insensitively called for dict field_value."""
+
+        class CamelCaseModel(BaseModel):
+            FirstName: str = ''
+            LastName: str = ''
+
+        class CaseInsensitiveSettings(BaseSettings):
+            person: CamelCaseModel = CamelCaseModel()
+
+        class CaseInsensitiveEnvSource(PydanticBaseEnvSettingsSource):
+            """Source that returns dict with lowercase field names."""
+
+            def get_field_value(self, field, field_name):
+                if field_name == 'person':
+                    # Return already decoded dict
+                    return {'firstname': 'John', 'lastname': 'Doe'}, field_name, False
+                return None, field_name, False
+
+            def prepare_field_value(self, field_name, field, value, value_is_complex):
+                # Return value as-is without decoding
+                return value
+
+        source = CaseInsensitiveEnvSource(CaseInsensitiveSettings, case_sensitive=False)
+        result = source()
+
+        assert 'person' in result
+        assert result['person']['FirstName'] == 'John'
+        assert result['person']['LastName'] == 'Doe'
+
 
 # --- Integration tests ---
 
