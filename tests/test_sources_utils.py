@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import enum
 from collections import deque
-from typing import Annotated, Any, Dict, FrozenSet, List, Literal, Optional, Set, Tuple, TypeVar, Union
+from typing import Annotated, Any, Dict, FrozenSet, List, Literal, Optional, Set, Tuple, TypeVar, Union, get_origin
 
 import pytest
 from pydantic import AliasChoices, AliasPath, BaseModel, Field, Json, RootModel, Secret
@@ -175,6 +175,56 @@ def test_substitute_typevars_union():
     tp = Union[T, int]
     result = _substitute_typevars(tp, {T: str})
     assert result == Union[str, int]
+
+
+def test_substitute_typevars_type_error_fallback(mocker):
+    """Test the TypeError fallback when origin is not subscriptable (e.g. types.UnionType from PEP 695)."""
+    import types as builtin_types
+
+    T = TypeVar('T')
+    tp = Union[T, int]
+
+    original_get_origin = get_origin
+
+    mocker.patch(
+        'pydantic_settings.sources.utils.get_origin',
+        side_effect=lambda x: builtin_types.UnionType if original_get_origin(x) is Union else original_get_origin(x),
+    )
+
+    result = _substitute_typevars(tp, {T: str})
+    assert result == str | int
+
+
+def test_substitute_typevars_type_error_fallback_multiple(mocker):
+    """Test the TypeError fallback with multiple TypeVars."""
+    import types as builtin_types
+
+    T = TypeVar('T')
+    S = TypeVar('S')
+    tp = Union[T, S, int]
+
+    original_get_origin = get_origin
+
+    mocker.patch(
+        'pydantic_settings.sources.utils.get_origin',
+        side_effect=lambda x: builtin_types.UnionType if original_get_origin(x) is Union else original_get_origin(x),
+    )
+
+    result = _substitute_typevars(tp, {T: str, S: float})
+    assert result == str | float | int
+
+
+def test_substitute_typevars_origin_none_args_changed():
+    """Test the fallback return tp when origin is None but args changed after substitution."""
+    T = TypeVar('T')
+
+    class FakeGeneric:
+        """A type with __args__ but no __origin__, so get_origin returns None."""
+        __args__ = (T, int)
+
+    fake = FakeGeneric()
+    result = _substitute_typevars(fake, {T: str})
+    assert result is fake
 
 
 # --- _resolve_type_alias ---
