@@ -113,6 +113,80 @@ class TestImportToml:
             toml_module.tomli = original_tomli
             toml_module.tomllib = original_tomllib
 
+    def test_import_toml_early_return_when_tomli_already_loaded(self):
+        """Test import_toml returns early when tomli is already loaded."""
+        import pydantic_settings.sources.providers.toml as toml_module
+
+        original_tomli = toml_module.tomli
+        original_tomllib = toml_module.tomllib
+        try:
+            # Create a mock tomli object
+            mock_tomli = MagicMock()
+            toml_module.tomli = mock_tomli
+            toml_module.tomllib = None
+
+            # Patch sys.version_info for Python < 3.11
+            with patch('sys.version_info', new=(3, 10)):
+                import_toml()
+                # tomli should remain the same (early return path)
+                assert toml_module.tomli is mock_tomli
+        finally:
+            toml_module.tomli = original_tomli
+            toml_module.tomllib = original_tomllib
+
+    def test_import_toml_early_return_when_tomllib_already_loaded(self):
+        """Test import_toml returns early when tomllib is already loaded on Python 3.11+."""
+        import pydantic_settings.sources.providers.toml as toml_module
+
+        original_tomli = toml_module.tomli
+        original_tomllib = toml_module.tomllib
+        try:
+            # Create a mock tomllib object
+            mock_tomllib = MagicMock()
+            toml_module.tomli = None
+            toml_module.tomllib = mock_tomllib
+
+            # Patch sys.version_info for Python >= 3.11
+            with patch('sys.version_info', new=(3, 11)):
+                import_toml()
+                # tomllib should remain the same (early return path)
+                assert toml_module.tomllib is mock_tomllib
+        finally:
+            toml_module.tomli = original_tomli
+            toml_module.tomllib = original_tomllib
+
+    def test_import_toml_loads_tomli_when_not_available(self, monkeypatch):
+        """Test import_toml actually loads tomli when it's not already loaded for Python < 3.11."""
+        import pydantic_settings.sources.providers.toml as toml_module
+
+        original_tomli = toml_module.tomli
+        original_tomllib = toml_module.tomllib
+
+        # Create a mock tomli module
+        mock_tomli = MagicMock()
+        try:
+            # Reset both to None
+            toml_module.tomli = None
+            toml_module.tomllib = None
+
+            # Patch sys.version_info for Python < 3.11
+            monkeypatch.setattr('sys.version_info', (3, 10, 0, 'final', 0))
+
+            # Mock the import of tomli in the function scope
+            def mock_import(name, *args, **kwargs):
+                if name == 'tomli':
+                    toml_module.tomli = mock_tomli
+                    return mock_tomli
+                return __import__(name, *args, **kwargs)
+
+            monkeypatch.setattr('builtins.__import__', mock_import)
+            import_toml()
+            # tomli should now be loaded
+            assert toml_module.tomli is not None
+        finally:
+            toml_module.tomli = original_tomli
+            toml_module.tomllib = original_tomllib
+
 
 class SimpleSettings(BaseSettings):
     """Simple settings class for testing."""
